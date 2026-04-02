@@ -112,6 +112,31 @@ Interpretation notes:
 - `cached: true` means the response was served from the short TTL cache.
 - `chain` + `address` identify the feed source selected for that response.
 
+### 3a) Badge
+`GET /badge/{pair}`
+
+Purpose:
+- Returns Shields-compatible JSON for dynamic price badges in docs.
+
+Response shape:
+- `schemaVersion` number (`1`)
+- `label` string (for example `BTC/USD`)
+- `message` string (current price)
+- `color` string
+
+Example:
+- `GET /badge/BTC_USD`
+
+Example response:
+```json
+{
+  "schemaVersion": 1,
+  "label": "BTC/USD",
+  "message": "69987.12000",
+  "color": "blue"
+}
+```
+
 ### 4) Tip (optional support)
 `POST /tip`
 
@@ -210,6 +235,7 @@ Tempo-only note:
 - For machine-to-machine numeric consumption, use `/price/{pair}?slim=true`.
 - For metadata-rich responses, use JSON mode (`/price/{pair}`).
 - For spreadsheet-style tabular ingestion of supported pairs, use `/discovery?format=csv`.
+- For dynamic documentation badges, use Shields endpoint mode with `/badge/{pair}`.
 - For Google Sheets numeric cells, use `=VALUE(IMPORTDATA("https://gud-price-service.up.railway.app/price/BTC_USD?slim=true"))`.
 - For Excel numeric cells, use `=VALUE(WEBSERVICE("https://gud-price-service.up.railway.app/price/BTC_USD?slim=true"))` (or Power Query if `WEBSERVICE` is unavailable).
 - For tipping UX, preflight token precision with `/tip/meta?asset=<token>`.

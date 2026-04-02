@@ -45,6 +45,15 @@ pub struct DiscoveryResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct BadgeResponse {
+    #[serde(rename = "schemaVersion")]
+    schema_version: u8,
+    label: String,
+    message: String,
+    color: String,
+}
+
+#[derive(Debug, Serialize)]
 struct HealthResponse {
     status: &'static str,
 }
@@ -108,6 +117,7 @@ pub fn app(state: AppState) -> Router {
         .route("/", get(get_llms_txt))
         .route("/tip", post(post_tip))
         .route("/tip/meta", get(get_tip_meta))
+        .route("/badge/{pair}", get(get_badge))
         .route("/price/{pair}", get(get_price))
         .route("/discovery", get(get_discovery))
         .route("/health", get(get_health))
@@ -210,13 +220,38 @@ async fn get_price(
     Query(query): Query<HashMap<String, String>>,
 ) -> Result<Response, ApiError> {
     let slim = is_slim_mode(&query);
-    let pair = canonicalize_pair(&raw_pair);
+    let (payload, cached) = resolve_price_payload(&state, &raw_pair).await?;
 
-    if let Some(cached) = read_cached(&state, &pair).await {
-        if slim {
-            return Ok(cached.price.into_response());
-        }
-        return Ok(Json(to_response(cached, true, state.cache_ttl.as_secs())).into_response());
+    if slim {
+        return Ok(payload.price.into_response());
+    }
+
+    Ok(Json(to_response(payload, cached, state.cache_ttl.as_secs())).into_response())
+}
+
+async fn get_badge(
+    State(state): State<AppState>,
+    Path(raw_pair): Path<String>,
+) -> Result<Response, ApiError> {
+    let (payload, _) = resolve_price_payload(&state, &raw_pair).await?;
+    let badge = BadgeResponse {
+        schema_version: 1,
+        label: payload.pair.replace('_', "/"),
+        message: payload.price,
+        color: "blue".to_string(),
+    };
+
+    Ok(Json(badge).into_response())
+}
+
+async fn resolve_price_payload(
+    state: &AppState,
+    raw_pair: &str,
+) -> Result<(CachedPrice, bool), ApiError> {
+    let pair = canonicalize_pair(raw_pair);
+
+    if let Some(cached) = read_cached(state, &pair).await {
+        return Ok((cached, true));
     }
 
     let feeds = state
@@ -225,7 +260,7 @@ async fn get_price(
         .cloned()
         .ok_or_else(|| ApiError::NotFound(format!("Unknown pair: {raw_pair}")))?;
 
-    if let Some(preferred_feed) = read_preferred_feed(&state, &pair).await {
+    if let Some(preferred_feed) = read_preferred_feed(state, &pair).await {
         if let Some(feed) =
             state
                 .registry
@@ -234,30 +269,20 @@ async fn get_price(
             if let Ok(result) = fetch_feed(state.provider.clone(), pair.clone(), feed).await {
                 let payload = result.payload;
                 if is_payload_fresh(&payload) {
-                    write_cache(&state, payload.clone()).await;
-
-                    if slim {
-                        return Ok(payload.price.into_response());
-                    }
-
-                    return Ok(Json(to_response(payload, false, state.cache_ttl.as_secs()))
-                        .into_response());
+                    write_cache(state, payload.clone()).await;
+                    return Ok((payload, false));
                 }
             }
         }
 
-        remove_preferred_feed(&state, &pair).await;
+        remove_preferred_feed(state, &pair).await;
     }
 
-    let payload = fetch_first_available_price(state.clone(), pair.clone(), feeds).await?;
+    let payload = fetch_first_available_price(state.clone(), pair, feeds).await?;
 
-    write_cache(&state, payload.clone()).await;
+    write_cache(state, payload.clone()).await;
 
-    if slim {
-        return Ok(payload.price.into_response());
-    }
-
-    Ok(Json(to_response(payload, false, state.cache_ttl.as_secs())).into_response())
+    Ok((payload, false))
 }
 
 async fn fetch_first_available_price(
@@ -1105,5 +1130,46 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let payload: TipMetaResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(payload.decimals, 9);
+    }
+
+    #[tokio::test]
+    async fn badge_returns_shields_payload() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let app = app(test_state(Duration::from_secs(3), calls));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/badge/BTC_USD")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["schemaVersion"], 1);
+        assert_eq!(payload["label"], "BTC/USD");
+        assert_eq!(payload["color"], "blue");
+    }
+
+    #[tokio::test]
+    async fn badge_unknown_pair_returns_404() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let app = app(test_state(Duration::from_secs(3), calls));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/badge/NOT_REAL")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }

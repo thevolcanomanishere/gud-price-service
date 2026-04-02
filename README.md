@@ -1,5 +1,9 @@
 # gud-price-service
 
+![BTC/USD](https://img.shields.io/endpoint?url=https%3A%2F%2Fgud-price-service.up.railway.app%2Fbadge%2FBTC_USD)
+![ETH/USD](https://img.shields.io/endpoint?url=https%3A%2F%2Fgud-price-service.up.railway.app%2Fbadge%2FETH_USD)
+![XAU/USD](https://img.shields.io/endpoint?url=https%3A%2F%2Fgud-price-service.up.railway.app%2Fbadge%2FXAU_USD)
+
 A minimal Rust webserver that serves live Chainlink prices using [`gud-price`](https://github.com/thevolcanomanishere/gud-price).
 
 ## Why this exists
@@ -34,6 +38,7 @@ Live deployment:
 - `GET /discovery` (JSON default, add `?format=csv` for CSV output)
 - `GET /price/{pair}` (JSON; cold requests race all chains, warm requests use the cached preferred chain when its `updated_at` is within 120 seconds, and `updated_at` is emitted as UTC)
 - `GET /price/{pair}?slim=true` (plain text price only)
+- `GET /badge/{pair}` (Shields endpoint JSON for dynamic README badges)
 - `POST /tip` (MPP challenge/verification flow for optional tips)
 - `GET /tip/meta?asset=USDC` (preflight token-decimals metadata for tipping)
 - `GET /` (plain text `llms.txt` for service discovery)
@@ -72,6 +77,7 @@ curl http://localhost:3000/health
 curl http://localhost:3000/discovery
 curl http://localhost:3000/price/BTC_USD
 curl http://localhost:3000/price/BTC_USD?slim=true
+curl http://localhost:3000/badge/BTC_USD
 curl http://localhost:3000/
 curl "http://localhost:3000/tip/meta?asset=USDC"
 curl -X POST http://localhost:3000/tip \
@@ -100,6 +106,13 @@ Notes:
 - Use canonical pair format like `BTC_USD`, `ETH_USD`, `XAU_USD`.
 - If `WEBSERVICE` is unavailable in your Excel version, use Power Query:
   Data -> From Web -> `https://gud-price-service.up.railway.app/price/BTC_USD?slim=true`
+
+## Live Badges
+
+These badges update from the live API using Shields endpoint mode:
+- BTC/USD: `https://img.shields.io/endpoint?url=https%3A%2F%2Fgud-price-service.up.railway.app%2Fbadge%2FBTC_USD`
+- ETH/USD: `https://img.shields.io/endpoint?url=https%3A%2F%2Fgud-price-service.up.railway.app%2Fbadge%2FETH_USD`
+- XAU/USD: `https://img.shields.io/endpoint?url=https%3A%2F%2Fgud-price-service.up.railway.app%2Fbadge%2FXAU_USD`
 
 ## Tipping
 
