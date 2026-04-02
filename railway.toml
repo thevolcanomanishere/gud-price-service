@@ -1,8 +1,8 @@
 [build]
-buildCommand = "cargo build --release"
+buildCommand = "cargo build --release && cp target/release/gud-price-service ./gud-price-service"
 
 [deploy]
-startCommand = "./target/release/gud-price-service"
+startCommand = "./gud-price-service"
 healthcheckPath = "/health"
 healthcheckTimeout = 120
 restartPolicyType = "on_failure"

@@ -1,1 +1,1 @@
-web: ./target/release/gud-price-service
+web: ./gud-price-service

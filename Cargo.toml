@@ -15,3 +15,11 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "syn
 [dev-dependencies]
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+incremental = false
