@@ -1,0 +1,9 @@
+[build]
+buildCommand = "cargo build --release"
+
+[deploy]
+startCommand = "./target/release/gud-price-service"
+healthcheckPath = "/health"
+healthcheckTimeout = 120
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10

@@ -1,0 +1,71 @@
+# gud-price-service API Guide (for LLM agents)
+
+This service returns Chainlink price data via the `gud-price` Rust package.
+
+## Base URL
+- Local default: `http://localhost:3000`
+- Hosted: use the deployment URL (for example Railway public URL)
+
+## Endpoints
+
+### 1) Health
+`GET /health`
+
+Response:
+- JSON: `{ "status": "ok" }`
+
+### 2) Discovery
+`GET /discovery`
+
+Purpose:
+- Returns all canonical pairs this service can serve.
+
+Response shape:
+- `asset_count` number
+- `assets` array of:
+  - `pair` string (canonical symbol, e.g. `BTC_USD`)
+  - `chains` string[] (where data exists)
+
+Example:
+`GET /discovery`
+
+### 3) Price
+`GET /price/{pair}`
+
+Path param:
+- `pair`: requested trading pair.
+- Input is normalized internally (e.g. `btc-usd`, `BTC / USD`, `btc_usd` all map to `BTC_USD`).
+
+Default response (JSON):
+- `pair` string
+- `chain` string
+- `address` string
+- `price` string
+- `description` string
+- `started_at` number
+- `updated_at` number
+- `cached` boolean
+- `cache_ttl_secs` number
+
+Slim response (plain text):
+- Use query `?slim=true`
+- Returns only the numeric price as plain text body (no JSON)
+
+Examples:
+- `GET /price/BTC_USD`
+- `GET /price/BTC_USD?slim=true`
+
+## Cache behavior
+- Short in-memory TTL cache (default 5 seconds).
+- Cached responses set `cached: true` in JSON mode.
+
+## Error behavior
+- Unknown pair: HTTP `404` with JSON error body:
+  - `{ "error": "Unknown pair: ..." }`
+- Upstream/RPC read failure: HTTP `502` with JSON error body.
+- Internal failures: HTTP `500` with JSON error body.
+
+## Integration notes for agents
+- Prefer `/discovery` first to enumerate supported canonical pairs.
+- For machine-to-machine numeric consumption, use `/price/{pair}?slim=true`.
+- For metadata-rich responses, use JSON mode (`/price/{pair}`).
