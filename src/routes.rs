@@ -1,6 +1,6 @@
 use crate::pair::canonicalize_pair;
 use crate::registry::DiscoveryAsset as RegistryDiscoveryAsset;
-use crate::state::{AppState, CachedPrice};
+use crate::state::{AppState, CachedPrice, PreferredFeed};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::http::header::{CONTENT_TYPE, HeaderValue};
@@ -10,6 +10,9 @@ use axum::{Json, Router};
 use chrono::{SecondsFormat, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::{Mutex, Notify, mpsc};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PriceResponse {
@@ -49,7 +52,24 @@ struct ErrorResponse {
 enum ApiError {
     NotFound(String),
     Upstream(String),
-    Internal(String),
+}
+
+#[derive(Debug)]
+struct ProbeResult {
+    payload: CachedPrice,
+    latency: Duration,
+}
+
+#[derive(Debug)]
+enum ProbeMessage {
+    Success(ProbeResult),
+    Failure(String),
+}
+
+#[derive(Default)]
+struct FirstProbeResult {
+    payload: Mutex<Option<Result<CachedPrice, String>>>,
+    notify: Notify,
 }
 
 impl ApiError {
@@ -57,13 +77,12 @@ impl ApiError {
         match self {
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::Upstream(_) => StatusCode::BAD_GATEWAY,
-            Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
     fn message(self) -> String {
         match self {
-            Self::NotFound(msg) | Self::Upstream(msg) | Self::Internal(msg) => msg,
+            Self::NotFound(msg) | Self::Upstream(msg) => msg,
         }
     }
 }
@@ -145,50 +164,32 @@ async fn get_price(
     let feeds = state
         .registry
         .feeds_for(&pair)
+        .cloned()
         .ok_or_else(|| ApiError::NotFound(format!("Unknown pair: {raw_pair}")))?;
 
-    let mut best_entry: Option<(CachedPrice, u64)> = None;
-    let mut last_upstream_error: Option<String> = None;
+    if let Some(preferred_feed) = read_preferred_feed(&state, &pair).await {
+        if let Some(feed) = state
+            .registry
+            .feed_for_chain(&pair, &preferred_feed.chain, &preferred_feed.address)
+        {
+            if let Ok(result) = fetch_feed(state.provider.clone(), pair.clone(), feed).await {
+                let payload = result.payload;
+                write_cache(&state, payload.clone()).await;
 
-    for feed in feeds.iter().cloned() {
-        let provider = state.provider.clone();
-        let feed_for_task = feed.clone();
-        let round_result =
-            tokio::task::spawn_blocking(move || provider.read_latest_price(&feed_for_task))
-                .await
-                .map_err(|err| ApiError::Internal(format!("Worker failed: {err}")))?;
-
-        match round_result {
-            Ok(round) => {
-                let candidate = CachedPrice {
-                    pair: pair.clone(),
-                    chain: feed.chain.to_string(),
-                    address: feed.address.to_string(),
-                    price: round.answer,
-                    description: round.description,
-                    started_at: round.started_at,
-                    updated_at: round.updated_at,
-                };
-
-                if best_entry
-                    .as_ref()
-                    .map_or(true, |(_, best_updated)| round.updated_at > *best_updated)
-                {
-                    best_entry = Some((candidate, round.updated_at));
+                if slim {
+                    return Ok(payload.price.into_response());
                 }
-            }
-            Err(err) => {
-                last_upstream_error = Some(err);
+
+                return Ok(
+                    Json(to_response(payload, false, state.cache_ttl.as_secs())).into_response()
+                );
             }
         }
+
+        remove_preferred_feed(&state, &pair).await;
     }
 
-    let (payload, _) = best_entry.ok_or_else(|| {
-        ApiError::Upstream(
-            last_upstream_error
-                .unwrap_or_else(|| "No live feeds are currently available".to_string()),
-        )
-    })?;
+    let payload = fetch_first_available_price(state.clone(), pair.clone(), feeds).await?;
 
     write_cache(&state, payload.clone()).await;
 
@@ -197,6 +198,129 @@ async fn get_price(
     }
 
     Ok(Json(to_response(payload, false, state.cache_ttl.as_secs())).into_response())
+}
+
+async fn fetch_first_available_price(
+    state: AppState,
+    pair: String,
+    feeds: Vec<crate::registry::FeedRef>,
+) -> Result<CachedPrice, ApiError> {
+    let first_result = Arc::new(FirstProbeResult::default());
+    let (tx, rx) = mpsc::unbounded_channel();
+
+    for feed in feeds {
+        let tx = tx.clone();
+        let provider = state.provider.clone();
+        let pair_for_task = pair.clone();
+
+        tokio::spawn(async move {
+            let result = fetch_feed(provider, pair_for_task, feed).await;
+            let message = match result {
+                Ok(result) => ProbeMessage::Success(result),
+                Err(error) => ProbeMessage::Failure(error),
+            };
+            let _ = tx.send(message);
+        });
+    }
+    drop(tx);
+
+    tokio::spawn(track_preferred_feed(state.clone(), pair, rx, first_result.clone()));
+
+    loop {
+        let notified = first_result.notify.notified();
+        if let Some(result) = first_result.payload.lock().await.clone() {
+            return result.map_err(ApiError::Upstream);
+        }
+
+        notified.await;
+    }
+}
+
+async fn track_preferred_feed(
+    state: AppState,
+    pair: String,
+    mut rx: mpsc::UnboundedReceiver<ProbeMessage>,
+    first_result: Arc<FirstProbeResult>,
+) {
+    let mut best_preference: Option<ProbeResult> = None;
+    let mut first_success_seen = false;
+    let mut last_error: Option<String> = None;
+
+    while let Some(message) = rx.recv().await {
+        match message {
+            ProbeMessage::Success(result) => {
+                if !first_success_seen {
+                    first_success_seen = true;
+                    *first_result.payload.lock().await = Some(Ok(result.payload.clone()));
+                    first_result.notify.notify_waiters();
+                }
+
+                if best_preference
+                    .as_ref()
+                    .map_or(true, |best| is_better_preference(&result, best))
+                {
+                    best_preference = Some(result);
+                }
+            }
+            ProbeMessage::Failure(error) => {
+                last_error = Some(error);
+            }
+        }
+    }
+
+    if !first_success_seen {
+        *first_result.payload.lock().await = Some(Err(
+            last_error.unwrap_or_else(|| "No live feeds are currently available".to_string()),
+        ));
+        first_result.notify.notify_waiters();
+        return;
+    }
+
+    if let Some(best) = best_preference {
+        write_preferred_feed(
+            &state,
+            pair,
+            PreferredFeed {
+                chain: best.payload.chain,
+                address: best.payload.address,
+            },
+        )
+        .await;
+    }
+}
+
+fn is_better_preference(candidate: &ProbeResult, current: &ProbeResult) -> bool {
+    candidate.latency < current.latency
+        || (candidate.latency == current.latency
+            && candidate.payload.updated_at > current.payload.updated_at)
+}
+
+async fn fetch_feed(
+    provider: Arc<dyn crate::provider::PriceProvider>,
+    pair: String,
+    feed: crate::registry::FeedRef,
+) -> Result<ProbeResult, String> {
+    let feed_for_task = feed.clone();
+    let started = Instant::now();
+    let round = tokio::task::spawn_blocking(move || provider.read_latest_price(&feed_for_task))
+        .await
+        .map_err(|err| format!("Worker failed: {err}"))?
+        .map_err(|err| format!("{} ({})", err, feed.chain))?;
+
+    let latency = started.elapsed();
+
+    Ok(ProbeResult {
+        latency,
+        payload: CachedPrice {
+            pair,
+            chain: feed.chain.to_string(),
+            address: feed.address.to_string(),
+            price: round.answer,
+            description: round.description,
+            started_at: round.started_at,
+            updated_at: round.updated_at,
+        },
+    })
 }
 
 fn map_discovery_asset(item: &RegistryDiscoveryAsset) -> DiscoveryAsset {
@@ -276,6 +400,21 @@ async fn write_cache(state: &AppState, value: CachedPrice) {
     guard.put(value.pair.clone(), value);
 }
 
+async fn read_preferred_feed(state: &AppState, pair: &str) -> Option<PreferredFeed> {
+    let mut guard = state.preferred_feed_cache.write().await;
+    guard.get(pair)
+}
+
+async fn write_preferred_feed(state: &AppState, pair: String, value: PreferredFeed) {
+    let mut guard = state.preferred_feed_cache.write().await;
+    guard.put(pair, value);
+}
+
+async fn remove_preferred_feed(state: &AppState, pair: &str) {
+    let mut guard = state.preferred_feed_cache.write().await;
+    guard.remove(pair);
+}
+
 static LLMSTXT_CONTENT: &str = include_str!("../llms.txt");
 
 fn is_slim_mode(query: &HashMap<String, String>) -> bool {
@@ -290,25 +429,35 @@ mod tests {
     use axum::body::Body;
     use axum::http::Request;
     use http_body_util::BodyExt;
+    use std::collections::HashMap;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex as StdMutex;
     use std::time::Duration;
     use tower::ServiceExt;
 
     struct MockProvider {
         calls: Arc<AtomicUsize>,
+        chain_calls: Arc<StdMutex<HashMap<&'static str, usize>>>,
     }
 
     impl PriceProvider for MockProvider {
         fn read_latest_price(&self, feed: &FeedRef) -> Result<PriceRound, String> {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            let updated_at: u64 = if feed.chain == "fresh" {
-                200
-            } else if feed.chain == "stale" {
-                100
-            } else {
-                2
+            {
+                let mut chain_calls = self.chain_calls.lock().unwrap();
+                *chain_calls.entry(feed.chain).or_default() += 1;
+            }
+
+            let (sleep_ms, updated_at): (u64, u64) = match feed.chain {
+                "fast" => (5, 100),
+                "slow" => (60, 200),
+                _ => (0, 2),
             };
+
+            if sleep_ms > 0 {
+                std::thread::sleep(Duration::from_millis(sleep_ms));
+            }
 
             Ok(PriceRound {
                 round_id: 123,
@@ -332,13 +481,23 @@ mod tests {
     fn test_state_with_registry(
         ttl: Duration,
         calls: Arc<AtomicUsize>,
+        chain_calls: Arc<StdMutex<HashMap<&'static str, usize>>>,
         registry: Registry,
     ) -> AppState {
-        AppState::with_registry(ttl, Arc::new(MockProvider { calls }), registry)
+        AppState::with_registry(
+            ttl,
+            Arc::new(MockProvider { calls, chain_calls }),
+            registry,
+        )
     }
 
     fn test_state(ttl: Duration, calls: Arc<AtomicUsize>) -> AppState {
-        test_state_with_registry(ttl, calls, single_feed_registry("BTC_USD"))
+        test_state_with_registry(
+            ttl,
+            calls,
+            Arc::new(StdMutex::new(HashMap::new())),
+            single_feed_registry("BTC_USD"),
+        )
     }
 
     fn multi_feed_registry(pair: &'static str, feeds: &[(&'static str, &'static str)]) -> Registry {
@@ -405,15 +564,17 @@ mod tests {
     #[tokio::test]
     async fn selects_latest_updated_feed() {
         let calls = Arc::new(AtomicUsize::new(0));
-        let registry =
-            multi_feed_registry("XAU_USD", &[("stale", "0xstale"), ("fresh", "0xfresh")]);
+        let chain_calls = Arc::new(StdMutex::new(HashMap::new()));
+        let registry = multi_feed_registry("XAU_USD", &[("slow", "0xslow"), ("fast", "0xfast")]);
         let app = app(test_state_with_registry(
-            Duration::from_secs(3),
+            Duration::from_millis(20),
             calls.clone(),
+            chain_calls.clone(),
             registry,
         ));
 
         let response = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .uri("/price/XAU_USD")
@@ -427,12 +588,30 @@ mod tests {
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         let payload: PriceResponse = serde_json::from_slice(&bytes).unwrap();
 
-        assert_eq!(payload.chain, "fresh");
-        assert_eq!(payload.address, "0xfresh");
+        assert_eq!(payload.chain, "fast");
+        assert_eq!(payload.address, "0xfast");
         assert_eq!(payload.description, "XAU / USD");
-        assert_eq!(payload.updated_at, "1970-01-01T00:03:20Z");
+        assert_eq!(payload.updated_at, "1970-01-01T00:01:40Z");
         assert!(!payload.cached);
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        tokio::time::sleep(Duration::from_millis(25)).await;
+
+        let second = app
+            .oneshot(
+                Request::builder()
+                    .uri("/price/XAU_USD")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(second.status(), StatusCode::OK);
+        let per_chain = chain_calls.lock().unwrap();
+        assert_eq!(per_chain.get("fast"), Some(&2));
+        assert_eq!(per_chain.get("slow"), Some(&1));
     }
 
     #[tokio::test]

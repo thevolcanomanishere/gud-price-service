@@ -39,4 +39,8 @@ impl<T: Clone> TtlCache<T> {
             },
         );
     }
+
+    pub fn remove(&mut self, key: &str) {
+        self.inner.remove(key);
+    }
 }

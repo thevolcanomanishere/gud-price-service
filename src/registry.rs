@@ -51,6 +51,14 @@ impl Registry {
         self.by_pair.get(pair)
     }
 
+    pub fn feed_for_chain(&self, pair: &str, chain: &str, address: &str) -> Option<FeedRef> {
+        self.by_pair.get(pair).and_then(|feeds| {
+            feeds.iter()
+                .find(|feed| feed.chain == chain && feed.address == address)
+                .cloned()
+        })
+    }
+
     pub fn discovery_assets(&self) -> &[DiscoveryAsset] {
         &self.discovery
     }

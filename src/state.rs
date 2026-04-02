@@ -5,6 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
+const PREFERRED_FEED_TTL_SECS: u64 = 60 * 60 * 24 * 7;
+
 #[derive(Debug, Clone)]
 pub struct CachedPrice {
     pub pair: String,
@@ -16,11 +18,18 @@ pub struct CachedPrice {
     pub updated_at: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct PreferredFeed {
+    pub chain: String,
+    pub address: String,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub registry: Registry,
     pub cache_ttl: Duration,
     pub cache: Arc<RwLock<TtlCache<CachedPrice>>>,
+    pub preferred_feed_cache: Arc<RwLock<TtlCache<PreferredFeed>>>,
     pub provider: Arc<dyn PriceProvider>,
 }
 
@@ -38,6 +47,9 @@ impl AppState {
             registry,
             cache_ttl,
             cache: Arc::new(RwLock::new(TtlCache::new(cache_ttl))),
+            preferred_feed_cache: Arc::new(RwLock::new(TtlCache::new(Duration::from_secs(
+                PREFERRED_FEED_TTL_SECS,
+            )))),
             provider,
         }
     }
