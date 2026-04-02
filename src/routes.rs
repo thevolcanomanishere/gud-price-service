@@ -33,11 +33,18 @@ pub struct PriceResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveryPairResponse {
+    pub canonical: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveryChainResponse {
     pub name: String,
     pub description: String,
     pub pair_count: usize,
-    pub pairs: Vec<String>,
+    pub pairs: Vec<DiscoveryPairResponse>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -420,26 +427,45 @@ async fn fetch_feed(
     })
 }
 
+/// Returns `Some(description)` only when the Chainlink feed name is non-obvious
+/// (i.e. not just "SYMBOL / SYMBOL" which maps trivially to the canonical pair).
+fn non_obvious_description(canonical: &str, description: &str) -> Option<String> {
+    use crate::pair::canonicalize_pair;
+    if canonicalize_pair(description) == canonical {
+        None
+    } else {
+        Some(description.to_string())
+    }
+}
+
 fn map_discovery_chain(item: &RegistryDiscoveryChain) -> DiscoveryChainResponse {
     DiscoveryChainResponse {
         name: item.name.clone(),
         description: item.description.clone(),
         pair_count: item.pairs.len(),
-        pairs: item.pairs.clone(),
+        pairs: item
+            .pairs
+            .iter()
+            .map(|p| DiscoveryPairResponse {
+                description: non_obvious_description(&p.canonical, &p.description),
+                canonical: p.canonical.clone(),
+            })
+            .collect(),
     }
 }
 
 fn discovery_to_csv(chains: &[DiscoveryChainResponse]) -> Response {
     let mut csv = String::with_capacity(chains.len() * 256);
-    csv.push_str("chain,description,pair\n");
+    csv.push_str("chain,pair,description\n");
 
     for chain in chains {
         for pair in &chain.pairs {
+            let desc = pair.description.as_deref().unwrap_or("");
             let line = format!(
                 "{},{},{}\n",
                 escape_csv_field(&chain.name),
-                escape_csv_field(&chain.description),
-                escape_csv_field(pair),
+                escape_csv_field(&pair.canonical),
+                escape_csv_field(desc),
             );
             csv.push_str(&line);
         }
@@ -659,6 +685,7 @@ mod tests {
             chain: "ethereum",
             pair,
             address: "0xfeed",
+            description: pair,
         }])
     }
 
@@ -692,6 +719,7 @@ mod tests {
                 chain,
                 pair,
                 address,
+                description: pair,
             })
             .collect();
         Registry::from_feeds(feed_refs)
@@ -725,7 +753,7 @@ mod tests {
         assert!(payload
             .chains
             .iter()
-            .any(|c| c.pairs.iter().any(|p| p == "BTC_USD")));
+            .any(|c| c.pairs.iter().any(|p| p.canonical == "BTC_USD")));
     }
 
     #[tokio::test]

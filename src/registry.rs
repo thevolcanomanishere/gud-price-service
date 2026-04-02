@@ -7,13 +7,20 @@ pub struct FeedRef {
     pub chain: &'static str,
     pub pair: &'static str,
     pub address: &'static str,
+    pub description: &'static str,
+}
+
+#[derive(Debug, Clone)]
+pub struct DiscoveryPair {
+    pub canonical: String,
+    pub description: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct DiscoveryChain {
     pub name: String,
     pub description: String,
-    pub pairs: Vec<String>,
+    pub pairs: Vec<DiscoveryPair>,
 }
 
 #[derive(Debug, Clone)]
@@ -83,6 +90,7 @@ fn add_chain_feeds(
             chain,
             pair,
             address,
+            description: pair,
         });
     }
 }
@@ -98,22 +106,25 @@ fn chain_description(chain: &str) -> &'static str {
 }
 
 fn build_discovery(by_pair: &HashMap<String, Vec<FeedRef>>) -> Vec<DiscoveryChain> {
-    let mut by_chain: HashMap<&str, Vec<String>> = HashMap::new();
+    let mut by_chain: HashMap<&str, Vec<DiscoveryPair>> = HashMap::new();
 
-    for (pair, feeds) in by_pair {
+    for (canonical, feeds) in by_pair {
         for feed in feeds {
             by_chain
                 .entry(feed.chain)
                 .or_default()
-                .push(pair.clone());
+                .push(DiscoveryPair {
+                    canonical: canonical.clone(),
+                    description: feed.description.to_string(),
+                });
         }
     }
 
     let mut discovery: Vec<DiscoveryChain> = by_chain
         .into_iter()
         .map(|(chain, mut pairs)| {
-            pairs.sort_unstable();
-            pairs.dedup();
+            pairs.sort_by(|a, b| a.canonical.cmp(&b.canonical));
+            pairs.dedup_by(|a, b| a.canonical == b.canonical);
             DiscoveryChain {
                 name: chain.to_string(),
                 description: chain_description(chain).to_string(),
