@@ -448,42 +448,42 @@ fn pair_description(canonical: &str, chainlink_name: &str) -> Option<String> {
         "AMZN_USD" => "Amazon stock price",
         "COIN_USD" => "Coinbase stock price",
         "GOOGL_USD" => "Alphabet (Google) stock price",
-        "GOOGL_USD_24_5_" => "Alphabet stock price (extended hours)",
+        "GOOGL_USD_24_5" => "Alphabet stock price (extended hours)",
         "META_USD" => "Meta (Facebook) stock price",
         "MSFT_USD" => "Microsoft stock price",
         "NVDA_USD" => "Nvidia stock price",
-        "NVDA_USD_24_5_" => "Nvidia stock price (extended hours)",
+        "NVDA_USD_24_5" => "Nvidia stock price (extended hours)",
         "TSLA_USD" => "Tesla stock price",
-        "TSLA_USD_24_5_" => "Tesla stock price (extended hours)",
+        "TSLA_USD_24_5" => "Tesla stock price (extended hours)",
 
         // ETFs & indices
         "SPY_USD" => "S&P 500 ETF price",
-        "SPY_USD_24_5_" => "S&P 500 ETF price (extended hours)",
-        "QQQ_USD_24_5_" => "Nasdaq-100 ETF price (extended hours)",
+        "SPY_USD_24_5" => "S&P 500 ETF price (extended hours)",
+        "QQQ_USD_24_5" => "Nasdaq-100 ETF price (extended hours)",
         "IB01_USD" => "iShares $ Treasury 0-1yr Bond ETF",
         "IBTA_USD" => "iShares $ Treasury Bond ETF",
         "SHV_USD" => "iShares Short Treasury Bond ETF",
         "CSPX_USD" => "iShares Core S&P 500 UCITS ETF",
-        "TOTAL_MARKETCAP_USD" | "TOTAL_MARKETCAP_USD_1" => "Total crypto market capitalization",
+        "TOTAL_MARKETCAP_USD" => "Total crypto market capitalization",
 
         // Ondo tokenized securities
-        "SPYON_USD_ONDO_API_" => "Ondo tokenized S&P 500 (SPYon)",
-        "SPYON_USD_CALCULATED_" => "Ondo tokenized S&P 500 — calculated",
-        "QQON_USD_ONDO_API_" | "QQQON_USD_ONDO_API_" => "Ondo tokenized Nasdaq-100 (QQQon)",
-        "QQON_USD_CALCULATED_" | "QQQON_USD_CALCULATED_" => "Ondo tokenized Nasdaq-100 — calculated",
-        "TSLAON_USD_ONDO_API_" => "Ondo tokenized Tesla (TSLAon)",
-        "TSLAON_USD_CALCULATED_" => "Ondo tokenized Tesla — calculated",
-        "CRCLON_USD_ONDO_API_" => "Ondo tokenized fund (CRCLon)",
+        "SPYON_USD_ONDO_API" => "Ondo tokenized S&P 500 (SPYon)",
+        "SPYON_USD_CALCULATED" => "Ondo tokenized S&P 500 — calculated",
+        "QQQON_USD_ONDO_API" => "Ondo tokenized Nasdaq-100 (QQQon)",
+        "QQQON_USD_CALCULATED" => "Ondo tokenized Nasdaq-100 — calculated",
+        "TSLAON_USD_ONDO_API" => "Ondo tokenized Tesla (TSLAon)",
+        "TSLAON_USD_CALCULATED" => "Ondo tokenized Tesla — calculated",
+        "CRCLON_USD_ONDO_API" => "Ondo tokenized fund (CRCLon)",
 
         // US economic indicators
         "CONSUMER_PRICE_INDEX" => "US Consumer Price Index (CPI)",
         "PCE_PRICE_INDEX_LEVEL" => "US PCE price index level",
-        "PCE_PRICE_INDEX_PERCENT_CHANGE_ANNUAL_RATE_" => "US PCE inflation annual rate",
-        "REAL_GDP_LEVEL" | "REAL_GDP_LEVEL_1" => "US Real GDP level",
-        "REAL_GDP_PERCENT_CHANGE_ANNUAL_RATE_" => "US Real GDP growth annual rate",
+        "PCE_PRICE_INDEX_PERCENT_CHANGE_ANNUAL_RATE" => "US PCE inflation annual rate",
+        "REAL_GDP_LEVEL" => "US Real GDP level",
+        "REAL_GDP_PERCENT_CHANGE_ANNUAL_RATE" => "US Real GDP growth annual rate",
         "REAL_FINAL_SALES_TO_PRIVATE_DOMESTIC_PURCHASERS_LEVEL"
             => "US real final sales to domestic purchasers — level",
-        "REAL_FINAL_SALES_TO_PRIVATE_DOMESTIC_PURCHASERS_PERCENT_CHANGE_ANNUAL_RATE_"
+        "REAL_FINAL_SALES_TO_PRIVATE_DOMESTIC_PURCHASERS_PERCENT_CHANGE_ANNUAL_RATE"
             => "US real final sales to domestic purchasers — annual rate",
 
         // Fiat currencies (less common)
@@ -508,16 +508,16 @@ fn pair_description(canonical: &str, chainlink_name: &str) -> Option<String> {
         "ZAR_USD" => "South African rand",
 
         // GMX GM pool tokens
-        "GM_BTC_USD_WBTC_WBTC_" => "GMX GM pool: BTC/USD (WBTC collateral)",
-        "GM_ETH_USD_WETH_WETH_" => "GMX GM pool: ETH/USD (wETH collateral)",
+        "GM_BTC_USD_WBTC_WBTC" => "GMX GM pool: BTC/USD (WBTC collateral)",
+        "GM_ETH_USD_WETH_WETH" => "GMX GM pool: ETH/USD (wETH collateral)",
         "GMARB_USD" => "GMX GM pool: ARB market token",
         "GMBTC_USD" => "GMX GM pool: BTC market token",
         "GMETH_USD" => "GMX GM pool: ETH market token",
 
         // AAVE governance / safety
-        "AAVE_NETWORK_EMERGENCY_COUNT_ARBITRUM_" => "Aave emergency count on Arbitrum",
-        "AAVE_NETWORK_EMERGENCY_COUNT_BASE_" => "Aave emergency count on Base",
-        "AAVE_NETWORK_EMERGENCY_COUNT_POLYGON_" => "Aave emergency count on Polygon",
+        "AAVE_NETWORK_EMERGENCY_COUNT_ARBITRUM" => "Aave emergency count on Arbitrum",
+        "AAVE_NETWORK_EMERGENCY_COUNT_BASE" => "Aave emergency count on Base",
+        "AAVE_NETWORK_EMERGENCY_COUNT_POLYGON" => "Aave emergency count on Polygon",
 
         // Tokenized treasuries & RWA NAVs
         "EUTBL_NAV" => "Spiko Euro T-Bill NAV",
@@ -528,7 +528,7 @@ fn pair_description(canonical: &str, chainlink_name: &str) -> Option<String> {
         "JTRSY_NAV" => "Janus Henderson US Treasury ETF NAV",
         "WTGXX_NAV" => "WisdomTree Government Money Market NAV",
         "USPC_NAV" => "US Prosperity Coin NAV",
-        "TREASURY_NAV" | "TREASURY_NAV_1" => "Treasury+ fund NAV",
+        "TREASURY_NAV" => "Treasury+ fund NAV",
         "CASH_NAV" => "CASH+ stablecoin yield NAV",
         "BTCY_NAV" => "Hashnote BTC yield fund NAV",
         "RYT_NAV" => "Reserve Yield Token NAV",
@@ -537,7 +537,7 @@ fn pair_description(canonical: &str, chainlink_name: &str) -> Option<String> {
         "AOABTB_NAV" => "Angle AoABTb vault NAV",
         "CRDYX_NAV" => "Credix fund NAV",
         "XSOLVBTC_NAV" => "SolvBTC cross-chain NAV",
-        "RCUSD_NAV" | "RCUSD_NAV_1" => "rcUSD+ NAV",
+        "RCUSD_NAV" => "rcUSD+ NAV",
 
         // Proof of reserves / reserves attestation
         "CBBTC_RESERVES" => "Coinbase cbBTC reserves attestation",
