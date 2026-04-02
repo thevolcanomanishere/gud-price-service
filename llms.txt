@@ -26,38 +26,56 @@ Response:
 `GET /discovery`
 
 Purpose:
-- Returns all canonical pairs this service can serve.
-- Optional query `format=csv` emits CSV with header `pair,chains`.
+- Returns all supported pairs grouped by chain in a compact format.
+- Optional query `format=csv` emits CSV with header `chain,pair,description`.
 
 Response shape:
-- `asset_count` number
-- `assets` array of:
-  - `pair` string (canonical symbol, e.g. `BTC_USD`)
-  - `chains` string[] (where data exists)
+- `chains` number — count of chains
+- `pairs` number — total pair count across all chains
+- `data` object — keys are chain names, values are pair arrays
 
-Example:
-`GET /discovery`
+Each pair entry is either:
+- a plain string for self-explanatory pairs: `"BTC_USD"`
+- a `[pair, description]` tuple for non-obvious feeds: `["XAU_USD", "Gold spot price"]`
 
-Example JSON response:
+Example JSON:
 ```json
 {
-  "asset_count": 4,
-  "assets": [
-    { "pair": "BTC_USD", "chains": ["arbitrum", "base", "ethereum", "polygon"] },
-    { "pair": "ETH_USD", "chains": ["arbitrum", "base", "ethereum", "polygon"] },
-    { "pair": "XAU_USD", "chains": ["arbitrum", "base", "ethereum", "polygon"] },
-    { "pair": "LINK_USD", "chains": ["arbitrum", "base", "ethereum"] }
-  ]
+  "chains": 4,
+  "pairs": 686,
+  "data": {
+    "ethereum": [
+      ["AAPL_USD", "Apple stock price"],
+      "BTC_USD",
+      ["CONSUMER_PRICE_INDEX", "US Consumer Price Index (CPI)"],
+      "ETH_USD",
+      ["REAL_GDP_LEVEL", "US Real GDP level"],
+      ["XAU_USD", "Gold spot price"]
+    ],
+    "arbitrum": ["BTC_USD", "ETH_USD", ["WTI_USD", "WTI crude oil"]],
+    "base": ["BTC_USD", "ETH_USD"],
+    "polygon": ["BTC_USD", "ETH_USD"]
+  }
 }
 ```
 
-Example CSV response (`GET /discovery?format=csv`):
+Description categories — obvious crypto pairs omit descriptions. Non-obvious feeds include:
+- Commodities: `"Gold spot price"`, `"Silver spot price"`, `"WTI crude oil"`
+- Equities: `"Apple stock price"`, `"Nvidia stock price"`, `"Tesla stock price (extended hours)"`
+- ETFs: `"S&P 500 ETF price"`, `"Nasdaq-100 ETF price (extended hours)"`
+- Macro: `"US Consumer Price Index (CPI)"`, `"US Real GDP level"`, `"US PCE inflation annual rate"`
+- Fiat: `"Argentine peso"`, `"Turkish lira"`, `"South Korean won"`
+- DeFi: proof-of-reserves, exchange rates, NAV feeds, reserves attestations
+- Tokenized securities: `"Ondo tokenized S&P 500 (SPYon)"`
+
+Example CSV (`GET /discovery?format=csv`):
 ```csv
-pair,chains
-BTC_USD,arbitrum|base|ethereum|polygon
-ETH_USD,arbitrum|base|ethereum|polygon
-XAU_USD,arbitrum|base|ethereum|polygon
-LINK_USD,arbitrum|base|ethereum
+chain,pair,description
+ethereum,AAPL_USD,Apple stock price
+ethereum,BTC_USD,
+ethereum,CONSUMER_PRICE_INDEX,US Consumer Price Index (CPI)
+ethereum,ETH_USD,
+ethereum,XAU_USD,Gold spot price
 ```
 
 ### 3) Price
