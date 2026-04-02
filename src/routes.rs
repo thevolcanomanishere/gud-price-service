@@ -1,11 +1,15 @@
 use crate::pair::canonicalize_pair;
 use crate::registry::DiscoveryAsset as RegistryDiscoveryAsset;
 use crate::state::{AppState, CachedPrice, PreferredFeed};
+use crate::tip::{
+    TipErrorResponse, TipMetaQuery, TipOutcome, TipRequest, payment_required_response,
+};
 use axum::extract::{Path, Query, State};
+use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::http::header::{CONTENT_TYPE, HeaderValue};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{SecondsFormat, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
@@ -102,6 +106,8 @@ impl IntoResponse for ApiError {
 pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/", get(get_llms_txt))
+        .route("/tip", post(post_tip))
+        .route("/tip/meta", get(get_tip_meta))
         .route("/price/{pair}", get(get_price))
         .route("/discovery", get(get_discovery))
         .route("/health", get(get_health))
@@ -149,6 +155,55 @@ async fn get_llms_txt() -> Response {
     response
 }
 
+async fn post_tip(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    payload: Result<Json<TipRequest>, axum::extract::rejection::JsonRejection>,
+) -> Response {
+    let Json(request) = match payload {
+        Ok(body) => body,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(TipErrorResponse {
+                    error: "invalid JSON body".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    if let Err(error) = request.validate() {
+        return (StatusCode::BAD_REQUEST, Json(TipErrorResponse { error })).into_response();
+    }
+
+    match state.tip_processor.process_tip(&headers, &request).await {
+        Ok(TipOutcome::Challenge(challenge)) => payment_required_response(challenge),
+        Ok(TipOutcome::Receipt(body, receipt)) => {
+            let mut response = Json(body).into_response();
+            if let Ok(header_value) = mpp::format_receipt(&receipt) {
+                if let Ok(header) = HeaderValue::from_str(&header_value) {
+                    response
+                        .headers_mut()
+                        .insert(mpp::PAYMENT_RECEIPT_HEADER, header);
+                }
+            }
+            response
+        }
+        Err(error) => (StatusCode::BAD_REQUEST, Json(TipErrorResponse { error })).into_response(),
+    }
+}
+
+async fn get_tip_meta(
+    State(state): State<AppState>,
+    Query(query): Query<TipMetaQuery>,
+) -> Response {
+    match state.tip_processor.tip_meta(&query) {
+        Ok(meta) => Json(meta).into_response(),
+        Err(error) => (StatusCode::BAD_REQUEST, Json(TipErrorResponse { error })).into_response(),
+    }
+}
+
 async fn get_price(
     State(state): State<AppState>,
     Path(raw_pair): Path<String>,
@@ -171,9 +226,10 @@ async fn get_price(
         .ok_or_else(|| ApiError::NotFound(format!("Unknown pair: {raw_pair}")))?;
 
     if let Some(preferred_feed) = read_preferred_feed(&state, &pair).await {
-        if let Some(feed) = state
-            .registry
-            .feed_for_chain(&pair, &preferred_feed.chain, &preferred_feed.address)
+        if let Some(feed) =
+            state
+                .registry
+                .feed_for_chain(&pair, &preferred_feed.chain, &preferred_feed.address)
         {
             if let Ok(result) = fetch_feed(state.provider.clone(), pair.clone(), feed).await {
                 let payload = result.payload;
@@ -184,10 +240,8 @@ async fn get_price(
                         return Ok(payload.price.into_response());
                     }
 
-                    return Ok(
-                        Json(to_response(payload, false, state.cache_ttl.as_secs()))
-                            .into_response(),
-                    );
+                    return Ok(Json(to_response(payload, false, state.cache_ttl.as_secs()))
+                        .into_response());
                 }
             }
         }
@@ -230,7 +284,12 @@ async fn fetch_first_available_price(
     }
     drop(tx);
 
-    tokio::spawn(track_preferred_feed(state.clone(), pair, rx, first_result.clone()));
+    tokio::spawn(track_preferred_feed(
+        state.clone(),
+        pair,
+        rx,
+        first_result.clone(),
+    ));
 
     loop {
         let notified = first_result.notify.notified();
@@ -275,9 +334,10 @@ async fn track_preferred_feed(
     }
 
     if !first_success_seen {
-        *first_result.payload.lock().await = Some(Err(
-            last_error.unwrap_or_else(|| "No live feeds are currently available".to_string()),
-        ));
+        *first_result.payload.lock().await =
+            Some(Err(last_error.unwrap_or_else(|| {
+                "No live feeds are currently available".to_string()
+            })));
         first_result.notify.notify_waiters();
         return;
     }
@@ -398,7 +458,10 @@ fn format_updated_at(timestamp: u64) -> String {
 
 fn is_payload_fresh(payload: &CachedPrice) -> bool {
     let now = current_unix_timestamp();
-    payload.updated_at.saturating_add(PREFERRED_FEED_MAX_STALENESS_SECS) >= now
+    payload
+        .updated_at
+        .saturating_add(PREFERRED_FEED_MAX_STALENESS_SECS)
+        >= now
 }
 
 fn current_unix_timestamp() -> u64 {
@@ -441,19 +504,83 @@ mod tests {
     use super::*;
     use crate::provider::{PriceProvider, PriceRound};
     use crate::registry::{FeedRef, Registry};
+    use crate::tip::{
+        SharedTipProcessor, TipMetaQuery, TipMetaResponse, TipProcessor, TipReceiptResponse,
+    };
     use axum::body::Body;
     use axum::http::Request;
     use http_body_util::BodyExt;
+    use mpp::{Base64UrlJson, MethodName, PaymentChallenge, Receipt, ReceiptStatus};
     use std::collections::HashMap;
+    use std::future::Future;
+    use std::pin::Pin;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex as StdMutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
     use tower::ServiceExt;
 
     struct MockProvider {
         calls: Arc<AtomicUsize>,
         chain_calls: Arc<StdMutex<HashMap<&'static str, usize>>>,
+    }
+
+    struct MockTipProcessor;
+
+    impl TipProcessor for MockTipProcessor {
+        fn process_tip<'a>(
+            &'a self,
+            headers: &'a HeaderMap,
+            request: &'a TipRequest,
+        ) -> Pin<Box<dyn Future<Output = Result<TipOutcome, String>> + Send + 'a>> {
+            Box::pin(async move {
+                request.validate()?;
+
+                let auth = headers
+                    .get(axum::http::header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok());
+
+                if auth != Some("Payment mock") {
+                    return Ok(TipOutcome::Challenge(PaymentChallenge::new(
+                        "tip-id",
+                        "test",
+                        "tempo",
+                        "charge",
+                        Base64UrlJson::from_value(&serde_json::json!({
+                            "amount": request.amount,
+                        }))
+                        .unwrap(),
+                    )));
+                }
+
+                Ok(TipOutcome::Receipt(
+                    TipReceiptResponse {
+                        status: "tipped".to_string(),
+                        amount: request.amount.clone(),
+                        asset: "0xasset".to_string(),
+                        network: "base".to_string(),
+                        recipient: "0xtip".to_string(),
+                        message: "thanks for supporting gud-price-service".to_string(),
+                    },
+                    Receipt {
+                        status: ReceiptStatus::Success,
+                        method: MethodName::new("tempo"),
+                        timestamp: "2026-01-01T00:00:00Z".to_string(),
+                        reference: "0xreceipt".to_string(),
+                    },
+                ))
+            })
+        }
+
+        fn tip_meta(&self, query: &TipMetaQuery) -> Result<TipMetaResponse, String> {
+            let asset = query.asset.clone().unwrap_or_else(|| "0xasset".to_string());
+            let decimals = query.decimals.unwrap_or(6);
+            Ok(TipMetaResponse {
+                asset,
+                decimals,
+                source: "request".to_string(),
+            })
+        }
     }
 
     impl PriceProvider for MockProvider {
@@ -468,7 +595,10 @@ mod tests {
             let (sleep_ms, updated_at): (u64, u64) = match feed.chain {
                 "fast" => (5, now.saturating_sub(10)),
                 "slow" => (60, now.saturating_sub(1)),
-                "stale" => (1, now.saturating_sub(PREFERRED_FEED_MAX_STALENESS_SECS + 600)),
+                "stale" => (
+                    1,
+                    now.saturating_sub(PREFERRED_FEED_MAX_STALENESS_SECS + 600),
+                ),
                 "fresh" => (10, now.saturating_sub(2)),
                 _ => (0, now.saturating_sub(1)),
             };
@@ -505,6 +635,7 @@ mod tests {
         AppState::with_registry(
             ttl,
             Arc::new(MockProvider { calls, chain_calls }),
+            test_tip_processor(),
             registry,
         )
     }
@@ -528,6 +659,10 @@ mod tests {
             })
             .collect();
         Registry::from_feeds(feed_refs)
+    }
+
+    fn test_tip_processor() -> SharedTipProcessor {
+        Arc::new(MockTipProcessor)
     }
 
     #[tokio::test]
@@ -638,7 +773,8 @@ mod tests {
     async fn stale_preferred_feed_is_ignored_and_reprobed() {
         let calls = Arc::new(AtomicUsize::new(0));
         let chain_calls = Arc::new(StdMutex::new(HashMap::new()));
-        let registry = multi_feed_registry("ETH_USD", &[("stale", "0xstale"), ("fresh", "0xfresh")]);
+        let registry =
+            multi_feed_registry("ETH_USD", &[("stale", "0xstale"), ("fresh", "0xfresh")]);
         let state = test_state_with_registry(
             Duration::from_millis(1),
             calls.clone(),
@@ -808,5 +944,166 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let text = String::from_utf8(body.to_vec()).unwrap();
         assert!(text.contains("gud-price-service API Guide"));
+    }
+
+    #[tokio::test]
+    async fn tip_without_auth_returns_payment_required() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let app = app(test_state(Duration::from_secs(3), calls));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/tip")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"amount":"1000"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::PAYMENT_REQUIRED);
+        assert!(
+            response
+                .headers()
+                .contains_key(mpp::WWW_AUTHENTICATE_HEADER)
+        );
+    }
+
+    #[tokio::test]
+    async fn tip_invalid_amount_returns_400() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let app = app(test_state(Duration::from_secs(3), calls));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/tip")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"amount":"0"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn tip_malformed_json_returns_400() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let app = app(test_state(Duration::from_secs(3), calls));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/tip")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"amount":"1000""#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn tip_with_auth_returns_receipt() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let app = app(test_state(Duration::from_secs(3), calls));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/tip")
+                    .header(CONTENT_TYPE, "application/json")
+                    .header(axum::http::header::AUTHORIZATION, "Payment mock")
+                    .body(Body::from(r#"{"amount":"1000"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().contains_key(mpp::PAYMENT_RECEIPT_HEADER));
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let payload: TipReceiptResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload.status, "tipped");
+        assert_eq!(payload.amount, "1000");
+        assert_eq!(payload.asset, "0xasset");
+    }
+
+    #[tokio::test]
+    async fn tip_invalid_auth_returns_payment_required() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let app = app(test_state(Duration::from_secs(3), calls));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/tip")
+                    .header(CONTENT_TYPE, "application/json")
+                    .header(axum::http::header::AUTHORIZATION, "Payment not-valid")
+                    .body(Body::from(r#"{"amount":"1000"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::PAYMENT_REQUIRED);
+        assert!(
+            response
+                .headers()
+                .contains_key(mpp::WWW_AUTHENTICATE_HEADER)
+        );
+    }
+
+    #[tokio::test]
+    async fn tip_meta_returns_decimals_for_asset() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let app = app(test_state(Duration::from_secs(3), calls));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/tip/meta?asset=USDC")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let payload: TipMetaResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload.asset, "USDC");
+        assert_eq!(payload.decimals, 6);
+    }
+
+    #[tokio::test]
+    async fn tip_meta_allows_override_decimals() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let app = app(test_state(Duration::from_secs(3), calls));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/tip/meta?asset=USDC&decimals=9")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let payload: TipMetaResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload.decimals, 9);
     }
 }

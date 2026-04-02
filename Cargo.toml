@@ -12,6 +12,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
 chrono = "0.4"
+mpp = { version = "0.8.3", default-features = false, features = ["axum", "tempo"] }
 
 [dev-dependencies]
 http-body-util = "0.1"

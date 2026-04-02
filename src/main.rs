@@ -1,11 +1,19 @@
-use gud_price_service::{AppState, Config, GudPriceProvider, app};
+use gud_price_service::{AppState, Config, GudPriceProvider, MppTipProcessor, app};
 use std::sync::Arc;
 
 #[tokio::main]
 async fn main() {
-    let config = Config::from_env();
+    let config = Config::from_env().expect("failed to load configuration");
+    let tip_processor = Arc::new(
+        MppTipProcessor::from_config(config.tip.clone())
+            .expect("failed to configure tip processor"),
+    );
 
-    let state = AppState::new(config.cache_ttl, Arc::new(GudPriceProvider::new()));
+    let state = AppState::new(
+        config.cache_ttl,
+        Arc::new(GudPriceProvider::new()),
+        tip_processor,
+    );
     let app = app(state);
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr)
