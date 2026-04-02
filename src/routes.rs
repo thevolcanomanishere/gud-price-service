@@ -427,15 +427,210 @@ async fn fetch_feed(
     })
 }
 
-/// Returns `Some(description)` only when the Chainlink feed name is non-obvious
-/// (i.e. not just "SYMBOL / SYMBOL" which maps trivially to the canonical pair).
-fn non_obvious_description(canonical: &str, description: &str) -> Option<String> {
+/// Returns a human-readable description for pairs that aren't self-explanatory.
+/// Obvious crypto pairs like BTC_USD or ETH_BTC return None.
+fn pair_description(canonical: &str, chainlink_name: &str) -> Option<String> {
+    // Curated descriptions for specific well-known non-crypto feeds
+    let curated = match canonical {
+        // Commodities
+        "XAU_USD" => "Gold spot price",
+        "XAG_USD" => "Silver spot price",
+        "XPT_USD" => "Platinum spot price",
+        "WTI_USD" => "WTI crude oil",
+        "PAXG_USD" => "Paxos gold-backed token",
+        "KAU_RESERVES" => "Kinesis gold (KAU) reserves attestation",
+        "KAG_RESERVES" => "Kinesis silver (KAG) reserves attestation",
+        "GLDY_RESERVES" => "Tether Gold reserves attestation",
+        "STGLD_TGLD_EXCHANGE_RATE" => "Tether Gold staking exchange rate",
+
+        // Equities
+        "AAPL_USD" => "Apple stock price",
+        "AMZN_USD" => "Amazon stock price",
+        "COIN_USD" => "Coinbase stock price",
+        "GOOGL_USD" => "Alphabet (Google) stock price",
+        "GOOGL_USD_24_5_" => "Alphabet stock price (extended hours)",
+        "META_USD" => "Meta (Facebook) stock price",
+        "MSFT_USD" => "Microsoft stock price",
+        "NVDA_USD" => "Nvidia stock price",
+        "NVDA_USD_24_5_" => "Nvidia stock price (extended hours)",
+        "TSLA_USD" => "Tesla stock price",
+        "TSLA_USD_24_5_" => "Tesla stock price (extended hours)",
+
+        // ETFs & indices
+        "SPY_USD" => "S&P 500 ETF price",
+        "SPY_USD_24_5_" => "S&P 500 ETF price (extended hours)",
+        "QQQ_USD_24_5_" => "Nasdaq-100 ETF price (extended hours)",
+        "IB01_USD" => "iShares $ Treasury 0-1yr Bond ETF",
+        "IBTA_USD" => "iShares $ Treasury Bond ETF",
+        "SHV_USD" => "iShares Short Treasury Bond ETF",
+        "CSPX_USD" => "iShares Core S&P 500 UCITS ETF",
+        "TOTAL_MARKETCAP_USD" | "TOTAL_MARKETCAP_USD_1" => "Total crypto market capitalization",
+
+        // Ondo tokenized securities
+        "SPYON_USD_ONDO_API_" => "Ondo tokenized S&P 500 (SPYon)",
+        "SPYON_USD_CALCULATED_" => "Ondo tokenized S&P 500 — calculated",
+        "QQON_USD_ONDO_API_" | "QQQON_USD_ONDO_API_" => "Ondo tokenized Nasdaq-100 (QQQon)",
+        "QQON_USD_CALCULATED_" | "QQQON_USD_CALCULATED_" => "Ondo tokenized Nasdaq-100 — calculated",
+        "TSLAON_USD_ONDO_API_" => "Ondo tokenized Tesla (TSLAon)",
+        "TSLAON_USD_CALCULATED_" => "Ondo tokenized Tesla — calculated",
+        "CRCLON_USD_ONDO_API_" => "Ondo tokenized fund (CRCLon)",
+
+        // US economic indicators
+        "CONSUMER_PRICE_INDEX" => "US Consumer Price Index (CPI)",
+        "PCE_PRICE_INDEX_LEVEL" => "US PCE price index level",
+        "PCE_PRICE_INDEX_PERCENT_CHANGE_ANNUAL_RATE_" => "US PCE inflation annual rate",
+        "REAL_GDP_LEVEL" | "REAL_GDP_LEVEL_1" => "US Real GDP level",
+        "REAL_GDP_PERCENT_CHANGE_ANNUAL_RATE_" => "US Real GDP growth annual rate",
+        "REAL_FINAL_SALES_TO_PRIVATE_DOMESTIC_PURCHASERS_LEVEL"
+            => "US real final sales to domestic purchasers — level",
+        "REAL_FINAL_SALES_TO_PRIVATE_DOMESTIC_PURCHASERS_PERCENT_CHANGE_ANNUAL_RATE_"
+            => "US real final sales to domestic purchasers — annual rate",
+
+        // Fiat currencies (less common)
+        "ARS_USD" => "Argentine peso",
+        "BRL_USD" => "Brazilian real",
+        "CNY_USD" => "Chinese yuan",
+        "COP_USD" => "Colombian peso",
+        "HKD_USD" => "Hong Kong dollar",
+        "IDR_USD" => "Indonesian rupiah",
+        "ILS_USD" => "Israeli shekel",
+        "INR_USD" => "Indian rupee",
+        "KRW_USD" => "South Korean won",
+        "MXN_USD" => "Mexican peso",
+        "NGN_USD" => "Nigerian naira",
+        "PHP_USD" => "Philippine peso",
+        "PLN_USD" => "Polish zloty",
+        "RON_USD" => "Romanian leu",
+        "SEK_USD" => "Swedish krona",
+        "SGD_USD" => "Singapore dollar",
+        "THB_USD" => "Thai baht",
+        "TRY_USD" => "Turkish lira",
+        "ZAR_USD" => "South African rand",
+
+        // GMX GM pool tokens
+        "GM_BTC_USD_WBTC_WBTC_" => "GMX GM pool: BTC/USD (WBTC collateral)",
+        "GM_ETH_USD_WETH_WETH_" => "GMX GM pool: ETH/USD (wETH collateral)",
+        "GMARB_USD" => "GMX GM pool: ARB market token",
+        "GMBTC_USD" => "GMX GM pool: BTC market token",
+        "GMETH_USD" => "GMX GM pool: ETH market token",
+
+        // AAVE governance / safety
+        "AAVE_NETWORK_EMERGENCY_COUNT_ARBITRUM_" => "Aave emergency count on Arbitrum",
+        "AAVE_NETWORK_EMERGENCY_COUNT_BASE_" => "Aave emergency count on Base",
+        "AAVE_NETWORK_EMERGENCY_COUNT_POLYGON_" => "Aave emergency count on Polygon",
+
+        // Tokenized treasuries & RWA NAVs
+        "EUTBL_NAV" => "Spiko Euro T-Bill NAV",
+        "USTBL_NAV" => "Spiko US T-Bill NAV",
+        "USTB_NAV_PER_SHARE" => "Superstate US T-Bill fund NAV/share",
+        "USCC_NAV_PER_SHARE" => "Superstate Crypto Carry fund NAV/share",
+        "JAAA_NAV" => "Janus Henderson AAA CLO ETF NAV",
+        "JTRSY_NAV" => "Janus Henderson US Treasury ETF NAV",
+        "WTGXX_NAV" => "WisdomTree Government Money Market NAV",
+        "USPC_NAV" => "US Prosperity Coin NAV",
+        "TREASURY_NAV" | "TREASURY_NAV_1" => "Treasury+ fund NAV",
+        "CASH_NAV" => "CASH+ stablecoin yield NAV",
+        "BTCY_NAV" => "Hashnote BTC yield fund NAV",
+        "RYT_NAV" => "Reserve Yield Token NAV",
+        "M_NAV" => "M^0 protocol NAV",
+        "AOABT_NAV" => "Angle AoABT vault NAV",
+        "AOABTB_NAV" => "Angle AoABTb vault NAV",
+        "CRDYX_NAV" => "Credix fund NAV",
+        "XSOLVBTC_NAV" => "SolvBTC cross-chain NAV",
+        "RCUSD_NAV" | "RCUSD_NAV_1" => "rcUSD+ NAV",
+
+        // Proof of reserves / reserves attestation
+        "CBBTC_RESERVES" => "Coinbase cbBTC reserves attestation",
+        "WBTC_PROOF_OF_RESERVES" => "Wrapped BTC (WBTC) proof of reserves",
+        "TUSD_RESERVES" => "TrueUSD reserves attestation",
+        "TETH_RESERVES" => "Tether ETH reserves attestation",
+        "ARKB_RESERVES" => "ARK 21Shares Bitcoin ETF reserves",
+        "STETH_PROOF_OF_RESERVES" => "Lido stETH proof of reserves",
+        "SWELL_ETH_PROOF_OF_RESERVES" => "Swell ETH proof of reserves",
+        "SWELL_RESTAKED_ETH_PROOF_OF_RESERVES" => "Swell restaked ETH proof of reserves",
+        "EETH_PROOF_OF_RESERVES" => "ether.fi eETH proof of reserves",
+        "EZETH_PROOF_OF_RESERVES" => "Renzo ezETH proof of reserves",
+        "LOMBARD_PROOF_OF_RESERVES" => "Lombard Finance proof of reserves",
+        "FBTC_PROOF_OF_RESERVES" => "Ignition FBTC proof of reserves",
+        "HBTC_PROOF_OF_RESERVES" => "Huobi HBTC proof of reserves",
+        "BGBTC_PROOF_OF_RESERVES" => "Bedrock bgBTC proof of reserves",
+        "IBTC_PROOF_OF_RESERVES" => "iBTC proof of reserves",
+        "ZBTC_PROOF_OF_RESERVES" => "Lorenzo zBTC proof of reserves",
+        "STBTC_PROOF_OF_RESERVES" => "Lorenzo stBTC proof of reserves",
+        "SOLVBTC_PROOF_OF_RESERVES" => "Solv Protocol SolvBTC proof of reserves",
+        "XSOLVBTC_PROOF_OF_RESERVES" => "Solv Protocol xSolvBTC proof of reserves",
+        "PUMPBTC_PROOF_OF_RESERVES" => "PumpBTC proof of reserves",
+        "UNIBTC_PROOF_OF_RESERVES" => "Bedrock uniBTC proof of reserves",
+        "ARSX_PROOF_OF_RESERVES" => "ARSx stablecoin proof of reserves",
+        "_21BTC_PROOF_OF_RESERVES" => "21.co BTC proof of reserves",
+        "RYT_ARBITRUM_PROOF_OF_RESERVES" | "RYT_POLYGON_PROOF_OF_RESERVES"
+            => "Reserve Yield Token proof of reserves",
+        "BNVDA_RESERVES_PROOF_OF_RESERVES" => "Backed Nvidia (bNVDA) reserves",
+        "BC3M_RESERVES" => "Backed EU short-term bond (bC3M) reserves",
+        "BCSPX_RESERVES" => "Backed S&P 500 (bCSPX) reserves",
+        "BIB01_RESERVES" => "Backed Treasury 0-1yr (bIB01) reserves",
+        "BIBTA_RESERVES" => "Backed Treasury (bIBTA) reserves",
+        "COPW_RESERVES" => "COPW reserves attestation",
+        "NEXUS_WETH_RESERVES" => "Nexus wETH reserves attestation",
+        "USDO_RESERVES" => "USDO stablecoin reserves attestation",
+        "AOABT_RESERVES" => "Angle AoABT vault reserves",
+        "M_RESERVES" => "M^0 protocol reserves",
+        "C1USD_RESERVES" => "C1USD stablecoin reserves",
+        "CUSD_AUM" => "Celo Dollar assets under management",
+
+        // Calculated / synthetic
+        "CALCULATED_ETH_USD" => "Calculated ETH+/USD synthetic price",
+        "CALCULATED_XSUSHI_ETH" => "Calculated xSUSHI/ETH synthetic price",
+        "CALCULATED_MATICX_USD" => "Calculated MaticX/USD synthetic price",
+        "CALCULATED_STMATIC_USD" => "Calculated stMATIC/USD synthetic price",
+        "IBBTC_PRICEPERSHARE" => "ibBTC (interest-bearing BTC) price per share",
+
+        // LST/LRT exchange rates — specific notable ones
+        "C3M_EUR" => "Euro short-term government bond rate",
+
+        _ => return pattern_pair_description(canonical, chainlink_name),
+    };
+    Some(curated.to_string())
+}
+
+/// Fallback: pattern-based descriptions for categories not individually curated.
+fn pattern_pair_description(canonical: &str, chainlink_name: &str) -> Option<String> {
     use crate::pair::canonicalize_pair;
-    if canonicalize_pair(description) == canonical {
-        None
-    } else {
-        Some(description.to_string())
+
+    // Exchange rate feeds — describe as wrapper/staking rate
+    if canonical.ends_with("_EXCHANGE_RATE")
+        || canonical.ends_with("_EXCHANGE_RATE_HIGH")
+        || canonical.ends_with("_EXCHANGE_RATE_LOW")
+    {
+        return Some(format!("{chainlink_name} (DeFi derivative rate)"));
     }
+
+    // Remaining NAV feeds not explicitly listed
+    if canonical.ends_with("_NAV") || canonical.contains("_NAV_") {
+        return Some(format!("{chainlink_name} (fund net asset value)"));
+    }
+
+    // Remaining proof of reserves not explicitly listed
+    if canonical.contains("PROOF_OF_RESERVES") {
+        return Some(format!("{chainlink_name} (backing attestation)"));
+    }
+
+    // Remaining reserves not explicitly listed
+    if canonical.ends_with("_RESERVES") {
+        return Some(format!("{chainlink_name} (reserves attestation)"));
+    }
+
+    // Remaining AUM feeds
+    if canonical.ends_with("_AUM") {
+        return Some(format!("{chainlink_name} (assets under management)"));
+    }
+
+    // If canonicalizing the Chainlink name differs, it carries useful context
+    if canonicalize_pair(chainlink_name) != canonical {
+        return Some(chainlink_name.to_string());
+    }
+
+    None
 }
 
 fn map_discovery_chain(item: &RegistryDiscoveryChain) -> DiscoveryChainResponse {
@@ -447,7 +642,7 @@ fn map_discovery_chain(item: &RegistryDiscoveryChain) -> DiscoveryChainResponse 
             .pairs
             .iter()
             .map(|p| DiscoveryPairResponse {
-                description: non_obvious_description(&p.canonical, &p.description),
+                description: pair_description(&p.canonical, &p.description),
                 canonical: p.canonical.clone(),
             })
             .collect(),

@@ -39,7 +39,7 @@ Response shape:
   - `pair_count` number
   - `pairs` array of:
     - `canonical` string (canonical pair symbol, e.g. `BTC_USD`)
-    - `description` string or absent — the original Chainlink feed name, included only when it differs from the canonical form (e.g. macro indicators, proof-of-reserves, exchange rates, NAV feeds)
+    - `description` string or absent — a concise human-readable explanation, omitted for self-explanatory crypto pairs
 
 Example:
 `GET /discovery`
@@ -53,36 +53,38 @@ Example JSON response:
     {
       "name": "ethereum",
       "description": "Chainlink price feeds on Ethereum mainnet",
-      "pair_count": 5,
+      "pair_count": 7,
       "pairs": [
+        { "canonical": "AAPL_USD", "description": "Apple stock price" },
         { "canonical": "BTC_USD" },
-        { "canonical": "CONSUMER_PRICE_INDEX", "description": "Consumer Price Index" },
+        { "canonical": "CONSUMER_PRICE_INDEX", "description": "US Consumer Price Index (CPI)" },
         { "canonical": "ETH_USD" },
-        { "canonical": "REAL_GDP_LEVEL", "description": "Real GDP — Level" },
-        { "canonical": "XAU_USD" }
+        { "canonical": "REAL_GDP_LEVEL", "description": "US Real GDP level" },
+        { "canonical": "WSTETH_STETH_EXCHANGE_RATE", "description": "WSTETH / STETH Exchange Rate (DeFi derivative rate)" },
+        { "canonical": "XAU_USD", "description": "Gold spot price" }
       ]
     }
   ]
 }
 ```
 
-Notes on descriptions:
-- Standard price pairs like `BTC_USD` omit the description field (it would just be `"BTC / USD"`).
-- Non-obvious feeds include the original Chainlink name, for example:
-  - `"Consumer Price Index"` — US CPI economic indicator
-  - `"Real GDP — Level"` — US GDP macro data
-  - `"WSTETH_STETH_EXCHANGE_RATE"` → `"WSTETH / STETH Exchange Rate"`
-  - `"FBTC_PROOF_OF_RESERVES"` → `"FBTC Proof of Reserves"`
-  - `"CASH_NAV"` → `"CASH+ NAV"`
+Description coverage — obvious crypto pairs (BTC_USD, ETH_USD, SOL_USD, etc.) have no description. Everything else gets a curated label:
+- Commodities: `"Gold spot price"`, `"Silver spot price"`, `"WTI crude oil"`
+- Equities: `"Apple stock price"`, `"Nvidia stock price"`, `"Tesla stock price (extended hours)"`
+- ETFs: `"S&P 500 ETF price"`, `"Nasdaq-100 ETF price (extended hours)"`
+- Macro: `"US Consumer Price Index (CPI)"`, `"US Real GDP level"`, `"US PCE inflation annual rate"`
+- Fiat: `"Argentine peso"`, `"Turkish lira"`, `"South Korean won"`
+- DeFi: proof-of-reserves, exchange rates, NAV feeds, reserves attestations
+- Tokenized securities: `"Ondo tokenized S&P 500 (SPYon)"`
 
 Example CSV response (`GET /discovery?format=csv`):
 ```csv
 chain,pair,description
+ethereum,AAPL_USD,Apple stock price
 ethereum,BTC_USD,
-ethereum,CONSUMER_PRICE_INDEX,Consumer Price Index
+ethereum,CONSUMER_PRICE_INDEX,US Consumer Price Index (CPI)
 ethereum,ETH_USD,
-ethereum,REAL_GDP_LEVEL,"Real GDP — Level"
-ethereum,XAU_USD,
+ethereum,XAU_USD,Gold spot price
 ```
 
 ### 3) Price
