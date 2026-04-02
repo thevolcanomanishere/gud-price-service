@@ -38,7 +38,7 @@ Path param:
 - Input is normalized internally (e.g. `btc-usd`, `BTC / USD`, `btc_usd` all map to `BTC_USD`).
 - On a cold lookup, the service races every enabled chain feed in parallel and returns the first successful result.
 - In the background, it records the freshest healthy chain for that pair, using latency as a tiebreaker, and reuses that preference for up to 1 week.
-- If the preferred chain later returns a stale `updated_at`, the service discards that preference and re-races all chains.
+- If the preferred chain later returns an `updated_at` more than 120 seconds old, the service discards that preference and re-races all chains.
 
 Default response (JSON):
 - `pair` string
@@ -61,6 +61,7 @@ Examples:
 ## Cache behavior
 - Short in-memory TTL cache (default 5 seconds).
 - Preferred feed selection is cached per pair for 1 week.
+- Preferred feeds are only trusted when their live `updated_at` is within 120 seconds of current UTC time.
 - Cached responses set `cached: true` in JSON mode.
 
 ## Error behavior

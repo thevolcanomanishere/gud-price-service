@@ -20,7 +20,7 @@ Built on top of your `gud-price` project:
 - `llms.txt` served at `/llms.txt` and `/.well-known/llms.txt`
 - Cold price requests race all feeds in parallel and return the first successful result
 - Background probing learns the freshest healthy chain for each pair, using latency as a tiebreaker, and reuses it for up to 1 week
-- Preferred chains are discarded and reprobed if their live `updated_at` is too old
+- Preferred chains are discarded and reprobed if their live `updated_at` is more than 120 seconds old
 - Price responses only expose `updated_at` as a UTC ISO timestamp (no `started_at`)
 - Chain-specific RPC overrides use the Lasso load-balanced endpoints for Ethereum, Arbitrum, and Base
 
@@ -28,7 +28,7 @@ Built on top of your `gud-price` project:
 
 - `GET /health`
 - `GET /discovery` (JSON default, add `?format=csv` for CSV output)
-- `GET /price/{pair}` (JSON; cold requests race all chains, warm requests use the cached preferred chain when it is still fresh, and `updated_at` is emitted as UTC)
+- `GET /price/{pair}` (JSON; cold requests race all chains, warm requests use the cached preferred chain when its `updated_at` is within 120 seconds, and `updated_at` is emitted as UTC)
 - `GET /price/{pair}?slim=true` (plain text price only)
 - `GET /llms.txt`
 - `GET /.well-known/llms.txt`
