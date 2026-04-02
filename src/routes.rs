@@ -101,6 +101,7 @@ impl IntoResponse for ApiError {
 
 pub fn app(state: AppState) -> Router {
     Router::new()
+        .route("/", get(get_llms_txt))
         .route("/price/{pair}", get(get_price))
         .route("/discovery", get(get_discovery))
         .route("/health", get(get_health))
@@ -784,6 +785,22 @@ mod tests {
                     .body(Body::empty())
                     .unwrap(),
             )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(text.contains("gud-price-service API Guide"));
+    }
+
+    #[tokio::test]
+    async fn root_serves_llms_txt() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let app = app(test_state(Duration::from_secs(3), calls));
+
+        let response = app
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
             .await
             .unwrap();
 

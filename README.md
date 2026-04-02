@@ -17,7 +17,7 @@ Built on top of your `gud-price` project:
 - Week-long preferred-chain cache per asset pair for fast repeat lookups
 - Discovery endpoint for supported pairs (JSON or CSV via `format=csv`)
 - Optional slim plain-text mode for easy machine consumption
-- `llms.txt` served at `/llms.txt` and `/.well-known/llms.txt`
+- `llms.txt` served at `/`, `/llms.txt`, and `/.well-known/llms.txt`
 - Cold price requests race all feeds in parallel and return the first successful result
 - Background probing learns the freshest healthy chain for each pair, using latency as a tiebreaker, and reuses it for up to 1 week
 - Preferred chains are discarded and reprobed if their live `updated_at` is more than 120 seconds old
@@ -30,6 +30,7 @@ Built on top of your `gud-price` project:
 - `GET /discovery` (JSON default, add `?format=csv` for CSV output)
 - `GET /price/{pair}` (JSON; cold requests race all chains, warm requests use the cached preferred chain when its `updated_at` is within 120 seconds, and `updated_at` is emitted as UTC)
 - `GET /price/{pair}?slim=true` (plain text price only)
+- `GET /` (plain text `llms.txt` for service discovery)
 - `GET /llms.txt`
 - `GET /.well-known/llms.txt`
 
@@ -57,6 +58,7 @@ curl http://localhost:3000/health
 curl http://localhost:3000/discovery
 curl http://localhost:3000/price/BTC_USD
 curl http://localhost:3000/price/BTC_USD?slim=true
+curl http://localhost:3000/
 ```
 
 ## Railway

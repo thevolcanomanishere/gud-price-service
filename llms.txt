@@ -5,6 +5,7 @@ This service returns Chainlink price data via the `gud-price` Rust package.
 ## Base URL
 - Local default: `http://localhost:3000`
 - Hosted: use the deployment URL (for example Railway public URL)
+- Root path `/` serves this same `llms.txt` content for service discovery.
 
 ## Endpoints
 
@@ -13,6 +14,12 @@ This service returns Chainlink price data via the `gud-price` Rust package.
 
 Response:
 - JSON: `{ "status": "ok" }`
+
+### 1a) Root discovery
+`GET /`
+
+Response:
+- Plain text `llms.txt` content identical to `GET /llms.txt`
 
 ### 2) Discovery
 `GET /discovery`
