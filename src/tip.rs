@@ -302,7 +302,8 @@ impl TipProcessor for MppTipProcessor {
 
             let credential = match parse_authorization(auth_header) {
                 Ok(credential) => credential,
-                Err(_) => {
+                Err(error) => {
+                    eprintln!("tip auth parse failed: {error}");
                     return self.challenge(&expected).map(TipOutcome::Challenge);
                 }
             };
@@ -323,7 +324,10 @@ impl TipProcessor for MppTipProcessor {
                     },
                     receipt,
                 )),
-                Err(_) => self.challenge(&expected).map(TipOutcome::Challenge),
+                Err(error) => {
+                    eprintln!("tip payment verification failed: {error}");
+                    self.challenge(&expected).map(TipOutcome::Challenge)
+                }
             }
         })
     }
