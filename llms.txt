@@ -118,11 +118,12 @@ Interpretation notes:
 Purpose:
 - Lets agents optionally tip to support this free public API.
 - Uses MPP challenge/verification flow.
+- Tipping currently supports Tempo network only.
 
 Request body:
 - JSON: `{ "amount": "<token amount string>", "asset": "<token address or symbol>", "decimals": <optional integer> }`
 - `amount` must be a positive token amount string (integer or decimal).
-- `asset` selects which token to tip in (for example ETH/WETH, USDC, USDT token address/symbol).
+- `asset` selects which token to tip in on Tempo.
 - If `asset` is omitted, the service falls back to its configured `TIP_ASSET` (if set).
 - `decimals` is optional per request for token precision.
   - If omitted, service auto-detects common assets (`ETH`/`WETH`=18, `USDC`/`USDT`=6), then falls back to server `TIP_DECIMALS`.
@@ -131,7 +132,7 @@ Request body:
 
 Behavior:
 - If payment authorization is missing or invalid, response is HTTP `402` with `WWW-Authenticate` challenge.
-- Tempo challenge request includes `methodDetails.chainId` so clients know the payment network.
+- Challenge request includes `methodDetails.chainId=4217` so clients know to pay on Tempo.
 - If payment authorization is valid, response is HTTP `200` JSON:
   - `status` string (`"tipped"`)
   - `amount` string
@@ -187,6 +188,9 @@ Example response:
   "source": "detected"
 }
 ```
+
+Tempo-only note:
+- Use Tempo-supported token addresses/symbols when calling `/tip` and `/tip/meta`.
 
 ## Cache behavior
 - Short in-memory TTL cache (default 5 seconds).
