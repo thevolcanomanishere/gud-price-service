@@ -36,6 +36,7 @@ Example:
 Path param:
 - `pair`: requested trading pair.
 - Input is normalized internally (e.g. `btc-usd`, `BTC / USD`, `btc_usd` all map to `BTC_USD`).
+- The service queries every enabled chain feed for that pair and returns whichever round has the highest `updated_at`.
 
 Default response (JSON):
 - `pair` string

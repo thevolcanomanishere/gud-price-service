@@ -30,18 +30,20 @@ impl Registry {
         add_chain_feeds("base", &base::BASE_FEEDS, &mut by_pair);
         add_chain_feeds("polygon", &polygon::POLYGON_FEEDS, &mut by_pair);
 
-        let mut discovery = Vec::with_capacity(by_pair.len());
-        for (pair, feeds) in &by_pair {
-            let mut chains: Vec<String> = feeds.iter().map(|f| f.chain.to_string()).collect();
-            chains.sort_unstable();
-            chains.dedup();
-            discovery.push(DiscoveryAsset {
-                pair: pair.clone(),
-                chains,
-            });
-        }
-        discovery.sort_by(|a, b| a.pair.cmp(&b.pair));
+        let discovery = build_discovery(&by_pair);
 
+        Self { by_pair, discovery }
+    }
+
+    pub fn from_feeds(feeds: Vec<FeedRef>) -> Self {
+        let mut by_pair: HashMap<String, Vec<FeedRef>> = HashMap::new();
+
+        for feed in feeds {
+            let canonical_pair = canonicalize_pair(feed.pair);
+            by_pair.entry(canonical_pair).or_default().push(feed);
+        }
+
+        let discovery = build_discovery(&by_pair);
         Self { by_pair, discovery }
     }
 
@@ -73,4 +75,20 @@ fn add_chain_feeds(
             address,
         });
     }
+}
+
+fn build_discovery(by_pair: &HashMap<String, Vec<FeedRef>>) -> Vec<DiscoveryAsset> {
+    let mut discovery = Vec::with_capacity(by_pair.len());
+
+    for (pair, feeds) in by_pair {
+        let mut chains: Vec<String> = feeds.iter().map(|f| f.chain.to_string()).collect();
+        chains.sort_unstable();
+        chains.dedup();
+        discovery.push(DiscoveryAsset {
+            pair: pair.clone(),
+            chains,
+        });
+    }
+    discovery.sort_by(|a, b| a.pair.cmp(&b.pair));
+    discovery
 }

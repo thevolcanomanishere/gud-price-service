@@ -142,29 +142,53 @@ async fn get_price(
         return Ok(Json(to_response(cached, true, state.cache_ttl.as_secs())).into_response());
     }
 
-    let feed = state
+    let feeds = state
         .registry
         .feeds_for(&pair)
-        .and_then(|feeds| feeds.first())
-        .cloned()
         .ok_or_else(|| ApiError::NotFound(format!("Unknown pair: {raw_pair}")))?;
 
-    let provider = state.provider.clone();
-    let feed_for_task = feed.clone();
-    let round = tokio::task::spawn_blocking(move || provider.read_latest_price(&feed_for_task))
-        .await
-        .map_err(|err| ApiError::Internal(format!("Worker failed: {err}")))?
-        .map_err(ApiError::Upstream)?;
+    let mut best_entry: Option<(CachedPrice, u64)> = None;
+    let mut last_upstream_error: Option<String> = None;
 
-    let payload = CachedPrice {
-        pair,
-        chain: feed.chain.to_string(),
-        address: feed.address.to_string(),
-        price: round.answer,
-        description: round.description,
-        started_at: round.started_at,
-        updated_at: round.updated_at,
-    };
+    for feed in feeds.iter().cloned() {
+        let provider = state.provider.clone();
+        let feed_for_task = feed.clone();
+        let round_result =
+            tokio::task::spawn_blocking(move || provider.read_latest_price(&feed_for_task))
+                .await
+                .map_err(|err| ApiError::Internal(format!("Worker failed: {err}")))?;
+
+        match round_result {
+            Ok(round) => {
+                let candidate = CachedPrice {
+                    pair: pair.clone(),
+                    chain: feed.chain.to_string(),
+                    address: feed.address.to_string(),
+                    price: round.answer,
+                    description: round.description,
+                    started_at: round.started_at,
+                    updated_at: round.updated_at,
+                };
+
+                if best_entry
+                    .as_ref()
+                    .map_or(true, |(_, best_updated)| round.updated_at > *best_updated)
+                {
+                    best_entry = Some((candidate, round.updated_at));
+                }
+            }
+            Err(err) => {
+                last_upstream_error = Some(err);
+            }
+        }
+    }
+
+    let (payload, _) = best_entry.ok_or_else(|| {
+        ApiError::Upstream(
+            last_upstream_error
+                .unwrap_or_else(|| "No live feeds are currently available".to_string()),
+        )
+    })?;
 
     write_cache(&state, payload.clone()).await;
 
@@ -197,9 +221,10 @@ fn discovery_to_csv(assets: &[DiscoveryAsset]) -> Response {
 
     (
         StatusCode::OK,
-        [
-            (CONTENT_TYPE, HeaderValue::from_static("text/csv; charset=utf-8")),
-        ],
+        [(
+            CONTENT_TYPE,
+            HeaderValue::from_static("text/csv; charset=utf-8"),
+        )],
         csv,
     )
         .into_response()
@@ -248,7 +273,7 @@ fn is_slim_mode(query: &HashMap<String, String>) -> bool {
 mod tests {
     use super::*;
     use crate::provider::{PriceProvider, PriceRound};
-    use crate::registry::FeedRef;
+    use crate::registry::{FeedRef, Registry};
     use axum::body::Body;
     use axum::http::Request;
     use http_body_util::BodyExt;
@@ -262,21 +287,57 @@ mod tests {
     }
 
     impl PriceProvider for MockProvider {
-        fn read_latest_price(&self, _feed: &FeedRef) -> Result<PriceRound, String> {
+        fn read_latest_price(&self, feed: &FeedRef) -> Result<PriceRound, String> {
             self.calls.fetch_add(1, Ordering::SeqCst);
+            let updated_at: u64 = if feed.chain == "fresh" {
+                200
+            } else if feed.chain == "stale" {
+                100
+            } else {
+                2
+            };
+
             Ok(PriceRound {
                 round_id: 123,
                 answer: "42000.12".to_string(),
-                started_at: 1,
-                updated_at: 2,
+                started_at: updated_at.saturating_sub(1),
+                updated_at,
                 answered_in_round: 123,
-                description: "BTC / USD".to_string(),
+                description: feed.pair.replace('_', " / "),
             })
         }
     }
 
+    fn single_feed_registry(pair: &'static str) -> Registry {
+        Registry::from_feeds(vec![FeedRef {
+            chain: "ethereum",
+            pair,
+            address: "0xfeed",
+        }])
+    }
+
+    fn test_state_with_registry(
+        ttl: Duration,
+        calls: Arc<AtomicUsize>,
+        registry: Registry,
+    ) -> AppState {
+        AppState::with_registry(ttl, Arc::new(MockProvider { calls }), registry)
+    }
+
     fn test_state(ttl: Duration, calls: Arc<AtomicUsize>) -> AppState {
-        AppState::new(ttl, Arc::new(MockProvider { calls }))
+        test_state_with_registry(ttl, calls, single_feed_registry("BTC_USD"))
+    }
+
+    fn multi_feed_registry(pair: &'static str, feeds: &[(&'static str, &'static str)]) -> Registry {
+        let feed_refs = feeds
+            .iter()
+            .map(|(chain, address)| FeedRef {
+                chain,
+                pair,
+                address,
+            })
+            .collect();
+        Registry::from_feeds(feed_refs)
     }
 
     #[tokio::test]
@@ -326,6 +387,39 @@ mod tests {
 
         assert!(payload.cached);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn selects_latest_updated_feed() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let registry =
+            multi_feed_registry("XAU_USD", &[("stale", "0xstale"), ("fresh", "0xfresh")]);
+        let app = app(test_state_with_registry(
+            Duration::from_secs(3),
+            calls.clone(),
+            registry,
+        ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/price/XAU_USD")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let payload: PriceResponse = serde_json::from_slice(&bytes).unwrap();
+
+        assert_eq!(payload.chain, "fresh");
+        assert_eq!(payload.address, "0xfresh");
+        assert_eq!(payload.description, "XAU / USD");
+        assert_eq!(payload.updated_at, 200);
+        assert!(!payload.cached);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
