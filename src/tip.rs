@@ -10,9 +10,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 const DEFAULT_TIP_MESSAGE: &str = "thanks for supporting gud-price-service";
-const DEFAULT_TIP_NETWORK: &str = "base";
+const DEFAULT_TIP_NETWORK: &str = "tempo";
 const DEFAULT_TIP_DECIMALS: u8 = 6;
-const DEFAULT_TIP_RECIPIENT: &str = "0x0D572d5c38503F446162B113277f7aa2Ac5C4961";
+const DEFAULT_TIP_RECIPIENT: &str = "0xDCFCE862742d72e6d6df8A84E3547aF2A6fdA0EF";
 
 #[derive(Debug, Clone)]
 pub struct TipConfig {
@@ -381,6 +381,9 @@ fn detect_asset_decimals(asset: &str) -> Option<u8> {
 
 fn detect_network_chain_id(network: &str) -> Option<u64> {
     match network.trim().to_ascii_lowercase().as_str() {
+        "tempo" => Some(4217),
+        "tempo-mainnet" => Some(4217),
+        "tempo-moderato" => Some(42431),
         "base" => Some(8453),
         "ethereum" | "mainnet" => Some(1),
         "arbitrum" | "arbitrum-one" => Some(42161),
@@ -567,6 +570,8 @@ mod tests {
 
     #[test]
     fn detects_chain_id_from_network_name() {
+        assert_eq!(detect_network_chain_id("tempo"), Some(4217));
+        assert_eq!(detect_network_chain_id("tempo-moderato"), Some(42431));
         assert_eq!(detect_network_chain_id("base"), Some(8453));
         assert_eq!(detect_network_chain_id("ethereum"), Some(1));
         assert_eq!(detect_network_chain_id("arbitrum"), Some(42161));
@@ -578,12 +583,12 @@ mod tests {
     fn infers_chain_id_from_tip_network_when_unset() {
         let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
         unsafe {
-            env::set_var("TIP_NETWORK", "base");
+            env::set_var("TIP_NETWORK", "tempo");
             env::remove_var("TIP_CHAIN_ID");
             env::set_var("TIP_RPC_URL", "https://example.com");
         }
 
         let config = TipConfig::from_env().unwrap();
-        assert_eq!(config.chain_id, Some(8453));
+        assert_eq!(config.chain_id, Some(4217));
     }
 }

@@ -47,7 +47,7 @@ Optional env vars:
 
 - `PORT` (default: `3000`)
 - `PRICE_CACHE_TTL_SECS` (default: `5`)
-- `TIP_NETWORK` (default: `base`)
+- `TIP_NETWORK` (default: `tempo`)
 - `TIP_RECIPIENT` (default: `0x0D572d5c38503F446162B113277f7aa2Ac5C4961`)
 - `TIP_ASSET` (optional fallback token address/symbol used when `asset` is omitted in `POST /tip`)
 - `TIP_RPC_URL` (required; RPC for the selected network)
