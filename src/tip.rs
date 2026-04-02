@@ -27,14 +27,17 @@ pub struct TipConfig {
 
 impl TipConfig {
     pub fn from_env() -> Result<Self, String> {
+        let network = env::var("TIP_NETWORK").unwrap_or_else(|_| DEFAULT_TIP_NETWORK.to_string());
+
         Ok(Self {
-            network: env::var("TIP_NETWORK").unwrap_or_else(|_| DEFAULT_TIP_NETWORK.to_string()),
+            network: network.clone(),
             recipient: env::var("TIP_RECIPIENT")
                 .unwrap_or_else(|_| DEFAULT_TIP_RECIPIENT.to_string()),
             default_asset: optional_env("TIP_ASSET")?,
             message: env::var("TIP_MESSAGE").unwrap_or_else(|_| DEFAULT_TIP_MESSAGE.to_string()),
             rpc_url: required_env("TIP_RPC_URL")?,
-            chain_id: optional_u64_env("TIP_CHAIN_ID")?,
+            chain_id: optional_u64_env("TIP_CHAIN_ID")?
+                .or_else(|| detect_network_chain_id(&network)),
             decimals: optional_u8_env("TIP_DECIMALS")?.unwrap_or(DEFAULT_TIP_DECIMALS),
         })
     }
@@ -226,6 +229,11 @@ impl MppTipProcessor {
         asset: &str,
         decimals: u8,
     ) -> Result<ChargeRequest, String> {
+        let mut method_details = serde_json::Map::new();
+        if let Some(chain_id) = self.config.chain_id {
+            method_details.insert("chainId".to_string(), serde_json::json!(chain_id));
+        }
+
         let request = ChargeRequest {
             amount: amount.to_string(),
             currency: asset.to_string(),
@@ -233,6 +241,8 @@ impl MppTipProcessor {
             decimals: amount.contains('.').then_some(decimals),
             recipient: Some(self.config.recipient.clone()),
             description: Some(self.config.message.clone()),
+            method_details: (!method_details.is_empty())
+                .then_some(serde_json::Value::Object(method_details)),
             ..Default::default()
         };
 
@@ -365,6 +375,16 @@ fn detect_asset_decimals(asset: &str) -> Option<u8> {
         "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" => Some(6),
         // Base USDT.
         "0xfde4c96c8593536e31f229ea8f37b2adab8b9bb2" => Some(6),
+        _ => None,
+    }
+}
+
+fn detect_network_chain_id(network: &str) -> Option<u64> {
+    match network.trim().to_ascii_lowercase().as_str() {
+        "base" => Some(8453),
+        "ethereum" | "mainnet" => Some(1),
+        "arbitrum" | "arbitrum-one" => Some(42161),
+        "polygon" | "polygon-pos" => Some(137),
         _ => None,
     }
 }
@@ -543,5 +563,27 @@ mod tests {
         let fallback = resolve_tip_meta(Some("TOKEN"), None, Some("WETH"), 18).unwrap();
         assert_eq!(fallback.decimals, 18);
         assert_eq!(fallback.source, "default");
+    }
+
+    #[test]
+    fn detects_chain_id_from_network_name() {
+        assert_eq!(detect_network_chain_id("base"), Some(8453));
+        assert_eq!(detect_network_chain_id("ethereum"), Some(1));
+        assert_eq!(detect_network_chain_id("arbitrum"), Some(42161));
+        assert_eq!(detect_network_chain_id("polygon"), Some(137));
+        assert_eq!(detect_network_chain_id("unknown"), None);
+    }
+
+    #[test]
+    fn infers_chain_id_from_tip_network_when_unset() {
+        let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        unsafe {
+            env::set_var("TIP_NETWORK", "base");
+            env::remove_var("TIP_CHAIN_ID");
+            env::set_var("TIP_RPC_URL", "https://example.com");
+        }
+
+        let config = TipConfig::from_env().unwrap();
+        assert_eq!(config.chain_id, Some(8453));
     }
 }

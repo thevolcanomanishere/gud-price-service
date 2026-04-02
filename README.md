@@ -52,7 +52,7 @@ Optional env vars:
 - `TIP_ASSET` (optional fallback token address/symbol used when `asset` is omitted in `POST /tip`)
 - `TIP_RPC_URL` (required; RPC for the selected network)
 - `MPP_SECRET_KEY` (required; used by MPP to sign/verify payment challenges)
-- `TIP_CHAIN_ID` (optional)
+- `TIP_CHAIN_ID` (optional override; auto-inferred for `base`, `ethereum`, `arbitrum`, `polygon`)
 - `TIP_DECIMALS` (optional; default: `6`)
 - `TIP_MESSAGE` (optional; default: `thanks for supporting gud-price-service`)
 

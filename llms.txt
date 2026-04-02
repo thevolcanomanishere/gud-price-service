@@ -131,6 +131,7 @@ Request body:
 
 Behavior:
 - If payment authorization is missing or invalid, response is HTTP `402` with `WWW-Authenticate` challenge.
+- Tempo challenge request includes `methodDetails.chainId` so clients know the payment network.
 - If payment authorization is valid, response is HTTP `200` JSON:
   - `status` string (`"tipped"`)
   - `amount` string
