@@ -7,6 +7,7 @@ use axum::http::header::{CONTENT_TYPE, HeaderValue};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
+use chrono::{SecondsFormat, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -17,8 +18,7 @@ pub struct PriceResponse {
     pub address: String,
     pub price: String,
     pub description: String,
-    pub started_at: u64,
-    pub updated_at: u64,
+    pub updated_at: String,
     pub cached: bool,
     pub cache_ttl_secs: u64,
 }
@@ -246,11 +246,24 @@ fn to_response(payload: CachedPrice, cached: bool, cache_ttl_secs: u64) -> Price
         address: payload.address,
         price: payload.price,
         description: payload.description,
-        started_at: payload.started_at,
-        updated_at: payload.updated_at,
+        updated_at: format_updated_at(payload.updated_at),
         cached,
         cache_ttl_secs,
     }
+}
+
+fn format_updated_at(timestamp: u64) -> String {
+    if let Ok(ts) = i64::try_from(timestamp) {
+        if let Some(dt) = Utc.timestamp_opt(ts, 0).single() {
+            return dt.to_rfc3339_opts(SecondsFormat::Secs, true);
+        }
+    }
+
+    if let Some(dt) = Utc.timestamp_opt(0, 0).single() {
+        return dt.to_rfc3339_opts(SecondsFormat::Secs, true);
+    }
+
+    "1970-01-01T00:00:00Z".to_string()
 }
 
 async fn read_cached(state: &AppState, pair: &str) -> Option<CachedPrice> {
@@ -417,7 +430,7 @@ mod tests {
         assert_eq!(payload.chain, "fresh");
         assert_eq!(payload.address, "0xfresh");
         assert_eq!(payload.description, "XAU / USD");
-        assert_eq!(payload.updated_at, 200);
+        assert_eq!(payload.updated_at, "1970-01-01T00:03:20Z");
         assert!(!payload.cached);
         assert_eq!(calls.load(Ordering::SeqCst), 2);
     }

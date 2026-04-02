@@ -1,4 +1,5 @@
 use crate::registry::FeedRef;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct PriceRound {
@@ -15,11 +16,40 @@ pub trait PriceProvider: Send + Sync {
 }
 
 #[derive(Debug)]
-pub struct GudPriceProvider;
+pub struct GudPriceProvider {
+    rpc_by_chain: HashMap<&'static str, &'static str>,
+}
+
+impl GudPriceProvider {
+    pub fn new() -> Self {
+        let mut rpc_by_chain = HashMap::new();
+        rpc_by_chain.insert(
+            "ethereum",
+            "https://lasso.sh/rpc/profile/default/load-balanced/ethereum?key=lasso_2gwS7wKZhQV8WkAZ2y9M3NTAYHpem9Gqg",
+        );
+        rpc_by_chain.insert(
+            "arbitrum",
+            "https://lasso.sh/rpc/profile/default/load-balanced/arbitrum?key=lasso_2gwS7wKZhQV8WkAZ2y9M3NTAYHpem9Gqg",
+        );
+        rpc_by_chain.insert(
+            "base",
+            "https://lasso.sh/rpc/profile/default/load-balanced/base?key=lasso_2gwS7wKZhQV8WkAZ2y9M3NTAYHpem9Gqg",
+        );
+
+        Self { rpc_by_chain }
+    }
+}
+
+impl Default for GudPriceProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl PriceProvider for GudPriceProvider {
     fn read_latest_price(&self, feed: &FeedRef) -> Result<PriceRound, String> {
-        let round = gud_price::rpc::read_latest_price(feed.address, None)?;
+        let rpc = self.rpc_by_chain.get(feed.chain).copied();
+        let round = gud_price::rpc::read_latest_price(feed.address, rpc)?;
         Ok(PriceRound {
             round_id: round.round_id,
             answer: round.answer,

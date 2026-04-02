@@ -18,12 +18,14 @@ Built on top of your `gud-price` project:
 - Optional slim plain-text mode for easy machine consumption
 - `llms.txt` served at `/llms.txt` and `/.well-known/llms.txt`
 - Price endpoint always picks the feed with the most recent update across available chains
+- Price responses only expose `updated_at` as a UTC ISO timestamp (no `started_at`)
+- Chain-specific RPC overrides use the Lasso load-balanced endpoints for Ethereum, Arbitrum, and Base
 
 ## Endpoints
 
 - `GET /health`
 - `GET /discovery` (JSON default, add `?format=csv` for CSV output)
-- `GET /price/{pair}` (JSON; returns the most recently updated feed across every supported chain)
+- `GET /price/{pair}` (JSON; returns the most recently updated feed across every supported chain and emits `updated_at` as UTC)
 - `GET /price/{pair}?slim=true` (plain text price only)
 - `GET /llms.txt`
 - `GET /.well-known/llms.txt`

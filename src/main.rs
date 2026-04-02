@@ -5,7 +5,7 @@ use std::sync::Arc;
 async fn main() {
     let config = Config::from_env();
 
-    let state = AppState::new(config.cache_ttl, Arc::new(GudPriceProvider));
+    let state = AppState::new(config.cache_ttl, Arc::new(GudPriceProvider::new()));
     let app = app(state);
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr)

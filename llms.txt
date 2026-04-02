@@ -44,8 +44,7 @@ Default response (JSON):
 - `address` string
 - `price` string
 - `description` string
-- `started_at` number
-- `updated_at` number
+- `updated_at` string (UTC)
 - `cached` boolean
 - `cache_ttl_secs` number
 
