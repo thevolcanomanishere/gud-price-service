@@ -127,7 +127,7 @@ Request body:
 - Tempo symbols are normalized to token addresses in challenges/responses (for example `USDC` -> `0x20C000000000000000000000b9537d11c60E8b50`).
 - If `asset` is omitted, the service falls back to its configured `TIP_ASSET` (if set).
 - `decimals` is optional per request for token precision.
-  - If omitted, service auto-detects common assets (`ETH`/`WETH`=18, `USDC`/`USDT`=6), then falls back to server `TIP_DECIMALS`.
+  - If omitted, service auto-detects common assets (`USDC`/`USDT`/`pathUSD`=6), then falls back to server `TIP_DECIMALS`.
   - Decimal `amount` values are converted to base units using resolved `decimals`.
   - Integer `amount` values are treated as base units for backward compatibility.
 
@@ -150,9 +150,9 @@ Example success response (`200`):
 {
   "status": "tipped",
   "amount": "1000000",
-  "asset": "0x20c0000000000000000000000000000000000000",
-  "network": "base",
-  "recipient": "0x0D572d5c38503F446162B113277f7aa2Ac5C4961",
+  "asset": "0x20C000000000000000000000b9537d11c60E8b50",
+  "network": "tempo",
+  "recipient": "0xDCFCE862742d72e6d6df8A84E3547aF2A6fdA0EF",
   "message": "thanks for supporting gud-price-service"
 }
 ```
