@@ -1,5 +1,4 @@
 use crate::pair::canonicalize_pair;
-use crate::registry::DiscoveryChain as RegistryDiscoveryChain;
 use crate::state::{AppState, CachedPrice, PreferredFeed};
 use crate::tip::{
     TipErrorResponse, TipMetaQuery, TipOutcome, TipRequest, payment_required_response,
@@ -32,26 +31,65 @@ pub struct PriceResponse {
     pub cache_ttl_secs: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiscoveryPairResponse {
-    pub canonical: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+#[derive(Debug, Clone)]
+pub struct DiscoveryPairEntry {
+    pub pair: String,
     pub description: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiscoveryChainResponse {
-    pub name: String,
-    pub description: String,
-    pub pair_count: usize,
-    pub pairs: Vec<DiscoveryPairResponse>,
+impl Serialize for DiscoveryPairEntry {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match &self.description {
+            Some(d) => {
+                use serde::ser::SerializeSeq;
+                let mut seq = serializer.serialize_seq(Some(2))?;
+                seq.serialize_element(&self.pair)?;
+                seq.serialize_element(d)?;
+                seq.end()
+            }
+            None => serializer.serialize_str(&self.pair),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for DiscoveryPairEntry {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de;
+
+        struct PairVisitor;
+        impl<'de> de::Visitor<'de> for PairVisitor {
+            type Value = DiscoveryPairEntry;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(f, "a string or [string, string] array")
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                Ok(DiscoveryPairEntry {
+                    pair: v.to_string(),
+                    description: None,
+                })
+            }
+            fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let pair: String = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(0, &"2"))?;
+                let desc: String = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(1, &"2"))?;
+                Ok(DiscoveryPairEntry {
+                    pair,
+                    description: Some(desc),
+                })
+            }
+        }
+        deserializer.deserialize_any(PairVisitor)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveryResponse {
-    pub chain_count: usize,
-    pub total_pairs: usize,
-    pub chains: Vec<DiscoveryChainResponse>,
+    pub chains: usize,
+    pub pairs: usize,
+    pub data: HashMap<String, Vec<DiscoveryPairEntry>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -140,11 +178,21 @@ async fn get_discovery(
     State(state): State<AppState>,
     Query(query): Query<HashMap<String, String>>,
 ) -> Response {
-    let chains: Vec<DiscoveryChainResponse> = state
-        .registry
-        .discovery_chains()
+    let source = state.registry.discovery_chains();
+
+    let data: HashMap<String, Vec<DiscoveryPairEntry>> = source
         .iter()
-        .map(map_discovery_chain)
+        .map(|c| {
+            let entries = c
+                .pairs
+                .iter()
+                .map(|p| DiscoveryPairEntry {
+                    description: pair_description(&p.canonical, &p.description),
+                    pair: p.canonical.clone(),
+                })
+                .collect();
+            (c.name.clone(), entries)
+        })
         .collect();
 
     if query
@@ -152,15 +200,15 @@ async fn get_discovery(
         .map(|value| value.eq_ignore_ascii_case("csv"))
         .unwrap_or(false)
     {
-        return discovery_to_csv(&chains);
+        return discovery_to_csv(&data);
     }
 
-    let total_pairs = chains.iter().map(|c| c.pair_count).sum();
+    let total_pairs: usize = data.values().map(|v| v.len()).sum();
 
     Json(DiscoveryResponse {
-        chain_count: chains.len(),
-        total_pairs,
-        chains,
+        chains: data.len(),
+        pairs: total_pairs,
+        data,
     })
     .into_response()
 }
@@ -633,33 +681,20 @@ fn pattern_pair_description(canonical: &str, chainlink_name: &str) -> Option<Str
     None
 }
 
-fn map_discovery_chain(item: &RegistryDiscoveryChain) -> DiscoveryChainResponse {
-    DiscoveryChainResponse {
-        name: item.name.clone(),
-        description: item.description.clone(),
-        pair_count: item.pairs.len(),
-        pairs: item
-            .pairs
-            .iter()
-            .map(|p| DiscoveryPairResponse {
-                description: pair_description(&p.canonical, &p.description),
-                canonical: p.canonical.clone(),
-            })
-            .collect(),
-    }
-}
+fn discovery_to_csv(data: &HashMap<String, Vec<DiscoveryPairEntry>>) -> Response {
+    let mut chains: Vec<_> = data.iter().collect();
+    chains.sort_by_key(|(name, _)| name.as_str());
 
-fn discovery_to_csv(chains: &[DiscoveryChainResponse]) -> Response {
-    let mut csv = String::with_capacity(chains.len() * 256);
+    let mut csv = String::with_capacity(data.len() * 256);
     csv.push_str("chain,pair,description\n");
 
-    for chain in chains {
-        for pair in &chain.pairs {
-            let desc = pair.description.as_deref().unwrap_or("");
+    for (chain, pairs) in &chains {
+        for entry in *pairs {
+            let desc = entry.description.as_deref().unwrap_or("");
             let line = format!(
                 "{},{},{}\n",
-                escape_csv_field(&chain.name),
-                escape_csv_field(&pair.canonical),
+                escape_csv_field(chain),
+                escape_csv_field(&entry.pair),
                 escape_csv_field(desc),
             );
             csv.push_str(&line);
@@ -944,11 +979,11 @@ mod tests {
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         let payload: DiscoveryResponse = serde_json::from_slice(&bytes).unwrap();
 
-        assert!(payload.chain_count > 0);
+        assert!(payload.chains > 0);
         assert!(payload
-            .chains
-            .iter()
-            .any(|c| c.pairs.iter().any(|p| p.canonical == "BTC_USD")));
+            .data
+            .values()
+            .any(|pairs| pairs.iter().any(|p| p.pair == "BTC_USD")));
     }
 
     #[tokio::test]

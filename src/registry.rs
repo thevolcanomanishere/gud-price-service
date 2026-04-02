@@ -19,7 +19,6 @@ pub struct DiscoveryPair {
 #[derive(Debug, Clone)]
 pub struct DiscoveryChain {
     pub name: String,
-    pub description: String,
     pub pairs: Vec<DiscoveryPair>,
 }
 
@@ -95,16 +94,6 @@ fn add_chain_feeds(
     }
 }
 
-fn chain_description(chain: &str) -> &'static str {
-    match chain {
-        "ethereum" => "Chainlink price feeds on Ethereum mainnet",
-        "arbitrum" => "Chainlink price feeds on Arbitrum One L2 rollup",
-        "base" => "Chainlink price feeds on Base L2 rollup (Coinbase)",
-        "polygon" => "Chainlink price feeds on Polygon PoS sidechain",
-        _ => "Chainlink price feeds",
-    }
-}
-
 fn build_discovery(by_pair: &HashMap<String, Vec<FeedRef>>) -> Vec<DiscoveryChain> {
     let mut by_chain: HashMap<&str, Vec<DiscoveryPair>> = HashMap::new();
 
@@ -127,7 +116,6 @@ fn build_discovery(by_pair: &HashMap<String, Vec<FeedRef>>) -> Vec<DiscoveryChai
             pairs.dedup_by(|a, b| a.canonical == b.canonical);
             DiscoveryChain {
                 name: chain.to_string(),
-                description: chain_description(chain).to_string(),
                 pairs,
             }
         })
