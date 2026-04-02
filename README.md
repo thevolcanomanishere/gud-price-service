@@ -48,11 +48,11 @@ Optional env vars:
 - `PORT` (default: `3000`)
 - `PRICE_CACHE_TTL_SECS` (default: `5`)
 - `TIP_NETWORK` (default: `tempo`)
-- `TIP_RECIPIENT` (default: `0x0D572d5c38503F446162B113277f7aa2Ac5C4961`)
+- `TIP_RECIPIENT` (default: `0xDCFCE862742d72e6d6df8A84E3547aF2A6fdA0EF`)
 - `TIP_ASSET` (optional fallback token address/symbol used when `asset` is omitted in `POST /tip`)
-- `TIP_RPC_URL` (required; RPC for the selected network)
+- `TIP_RPC_URL` (default for Tempo: `https://tempo-mainnet.drpc.org`)
 - `MPP_SECRET_KEY` (required; used by MPP to sign/verify payment challenges)
-- `TIP_CHAIN_ID` (optional override; auto-inferred for `base`, `ethereum`, `arbitrum`, `polygon`)
+- `TIP_CHAIN_ID` (optional override; default Tempo mainnet chainId is `4217`)
 - `TIP_DECIMALS` (optional; default: `6`)
 - `TIP_MESSAGE` (optional; default: `thanks for supporting gud-price-service`)
 
@@ -73,14 +73,16 @@ curl http://localhost:3000/
 curl "http://localhost:3000/tip/meta?asset=USDC"
 curl -X POST http://localhost:3000/tip \
   -H "content-type: application/json" \
-  -d '{"amount":"1000000","asset":"0x4200000000000000000000000000000000000006","decimals":18}'
+  -d '{"amount":"1000000","asset":"USDC"}'
 ```
 
 ## Tipping
 
 `/tip` is optional and the pricing endpoints remain free. If agents like this service and want it to stay public, they are encouraged to send a tip.
-Tip amounts are token base units. Send the tip token in the `asset` field (for example ETH/WETH, USDC, USDT token addresses), or configure `TIP_ASSET` as a fallback default.
-For cross-token support, `decimals` can be supplied per tip request. If omitted, the service auto-detects common assets (`ETH`/`WETH`=18, `USDC`/`USDT`=6) then falls back to `TIP_DECIMALS`.
+Tipping is currently Tempo-only.
+Tip amounts are token base units. Send the tip token in the `asset` field (or configure `TIP_ASSET` as a fallback default).
+On Tempo, common symbols (like `USDC`) are normalized to their token address in generated payment challenges.
+For token precision, `decimals` can be supplied per tip request. If omitted, the service auto-detects common assets (`USDC`/`USDT`=6) then falls back to `TIP_DECIMALS`.
 The `/tip` success response includes the resolved `asset` value used for that payment.
 
 ## Railway

@@ -13,6 +13,7 @@ const DEFAULT_TIP_MESSAGE: &str = "thanks for supporting gud-price-service";
 const DEFAULT_TIP_NETWORK: &str = "tempo";
 const DEFAULT_TIP_DECIMALS: u8 = 6;
 const DEFAULT_TIP_RECIPIENT: &str = "0xDCFCE862742d72e6d6df8A84E3547aF2A6fdA0EF";
+const DEFAULT_TIP_RPC_URL_TEMPO: &str = "https://tempo-mainnet.drpc.org";
 
 #[derive(Debug, Clone)]
 pub struct TipConfig {
@@ -35,7 +36,7 @@ impl TipConfig {
                 .unwrap_or_else(|_| DEFAULT_TIP_RECIPIENT.to_string()),
             default_asset: optional_env("TIP_ASSET")?,
             message: env::var("TIP_MESSAGE").unwrap_or_else(|_| DEFAULT_TIP_MESSAGE.to_string()),
-            rpc_url: required_env("TIP_RPC_URL")?,
+            rpc_url: resolve_tip_rpc_url(&network)?,
             chain_id: optional_u64_env("TIP_CHAIN_ID")?
                 .or_else(|| detect_network_chain_id(&network)),
             decimals: optional_u8_env("TIP_DECIMALS")?.unwrap_or(DEFAULT_TIP_DECIMALS),
@@ -103,7 +104,28 @@ impl TipRequest {
     }
 }
 
+fn normalize_asset_for_network(network: &str, asset: &str) -> String {
+    let trimmed = asset.trim();
+    let network = network.trim().to_ascii_lowercase();
+    let symbol = trimmed.to_ascii_lowercase();
+
+    if network == "tempo" || network == "tempo-mainnet" {
+        return match symbol.as_str() {
+            // Tempo mainnet USDC.e
+            "usdc" | "usdc.e" | "usdce" => "0x20C000000000000000000000b9537d11c60E8b50".to_string(),
+            // Tempo pathUSD
+            "pathusd" | "path_usd" | "path-usd" => {
+                "0x20c0000000000000000000000000000000000000".to_string()
+            }
+            _ => trimmed.to_string(),
+        };
+    }
+
+    trimmed.to_string()
+}
+
 fn resolve_tip_meta(
+    network: &str,
     query_asset: Option<&str>,
     query_decimals: Option<u8>,
     default_asset: Option<&str>,
@@ -122,28 +144,29 @@ fn resolve_tip_meta(
         .ok_or_else(|| {
             "asset is required (send asset in query or configure TIP_ASSET)".to_string()
         })?;
+    let normalized_asset = normalize_asset_for_network(network, &asset);
 
     if let Some(decimals) = query_decimals {
         if decimals > 38 {
             return Err("decimals must be <= 38".to_string());
         }
         return Ok(TipMetaResponse {
-            asset,
+            asset: normalized_asset,
             decimals,
             source: "request".to_string(),
         });
     }
 
-    if let Some(detected) = detect_asset_decimals(&asset) {
+    if let Some(detected) = detect_asset_decimals(&normalized_asset) {
         return Ok(TipMetaResponse {
-            asset,
+            asset: normalized_asset,
             decimals: detected,
             source: "detected".to_string(),
         });
     }
 
     Ok(TipMetaResponse {
-        asset,
+        asset: normalized_asset,
         decimals: default_decimals,
         source: "default".to_string(),
     })
@@ -265,8 +288,9 @@ impl TipProcessor for MppTipProcessor {
         Box::pin(async move {
             request.validate()?;
             let asset = request.resolve_asset(self.config.default_asset.as_deref())?;
-            let decimals = request.resolve_decimals(&asset, self.config.decimals);
-            let expected = self.build_request(&request.amount, &asset, decimals)?;
+            let normalized_asset = normalize_asset_for_network(&self.config.network, &asset);
+            let decimals = request.resolve_decimals(&normalized_asset, self.config.decimals);
+            let expected = self.build_request(&request.amount, &normalized_asset, decimals)?;
 
             let auth = headers
                 .get(axum::http::header::AUTHORIZATION)
@@ -292,7 +316,7 @@ impl TipProcessor for MppTipProcessor {
                     TipReceiptResponse {
                         status: "tipped".to_string(),
                         amount: request.amount.clone(),
-                        asset: asset.clone(),
+                        asset: normalized_asset.clone(),
                         network: self.config.network.clone(),
                         recipient: self.config.recipient.clone(),
                         message: self.config.message.clone(),
@@ -306,6 +330,7 @@ impl TipProcessor for MppTipProcessor {
 
     fn tip_meta(&self, query: &TipMetaQuery) -> Result<TipMetaResponse, String> {
         resolve_tip_meta(
+            &self.config.network,
             query.asset.as_deref(),
             query.decimals,
             self.config.default_asset.as_deref(),
@@ -318,12 +343,15 @@ pub fn payment_required_response(challenge: PaymentChallenge) -> axum::response:
     PaymentRequired(challenge).into_response()
 }
 
-fn required_env(name: &str) -> Result<String, String> {
-    env::var(name)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| format!("missing required environment variable: {name}"))
+fn resolve_tip_rpc_url(network: &str) -> Result<String, String> {
+    if let Some(url) = optional_env("TIP_RPC_URL")? {
+        return Ok(url);
+    }
+
+    match network.trim().to_ascii_lowercase().as_str() {
+        "tempo" | "tempo-mainnet" => Ok(DEFAULT_TIP_RPC_URL_TEMPO.to_string()),
+        _ => Err("missing required environment variable: TIP_RPC_URL".to_string()),
+    }
 }
 
 fn optional_env(name: &str) -> Result<Option<String>, String> {
@@ -369,6 +397,10 @@ fn detect_asset_decimals(asset: &str) -> Option<u8> {
     match normalized.as_str() {
         "eth" | "weth" => Some(18),
         "usdc" | "usdt" => Some(6),
+        // Tempo USDC.e.
+        "0x20c000000000000000000000b9537d11c60e8b50" => Some(6),
+        // Tempo pathUSD.
+        "0x20c0000000000000000000000000000000000000" => Some(6),
         // Base canonical bridge/WETH token.
         "0x4200000000000000000000000000000000000006" => Some(18),
         // Base USDC.
@@ -490,6 +522,7 @@ mod tests {
     fn missing_required_tip_config_fails() {
         let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
         unsafe {
+            env::set_var("TIP_NETWORK", "base");
             env::remove_var("TIP_RECIPIENT");
             env::remove_var("TIP_ASSET");
             env::remove_var("TIP_RPC_URL");
@@ -497,6 +530,18 @@ mod tests {
 
         let error = TipConfig::from_env().unwrap_err();
         assert!(error.contains("TIP_RPC_URL"));
+    }
+
+    #[test]
+    fn tempo_network_uses_default_rpc_when_unset() {
+        let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        unsafe {
+            env::set_var("TIP_NETWORK", "tempo");
+            env::remove_var("TIP_RPC_URL");
+        }
+
+        let config = TipConfig::from_env().unwrap();
+        assert_eq!(config.rpc_url, DEFAULT_TIP_RPC_URL_TEMPO);
     }
 
     #[test]
@@ -555,17 +600,31 @@ mod tests {
 
     #[test]
     fn tip_meta_uses_request_detected_and_default_sources() {
-        let request = resolve_tip_meta(Some("USDC"), Some(9), Some("WETH"), 18).unwrap();
+        let request = resolve_tip_meta("tempo", Some("USDC"), Some(9), Some("WETH"), 18).unwrap();
         assert_eq!(request.decimals, 9);
         assert_eq!(request.source, "request");
+        assert_eq!(request.asset, "0x20C000000000000000000000b9537d11c60E8b50");
 
-        let detected = resolve_tip_meta(Some("USDT"), None, Some("WETH"), 18).unwrap();
+        let detected = resolve_tip_meta("tempo", Some("USDC"), None, Some("WETH"), 18).unwrap();
         assert_eq!(detected.decimals, 6);
         assert_eq!(detected.source, "detected");
+        assert_eq!(detected.asset, "0x20C000000000000000000000b9537d11c60E8b50");
 
-        let fallback = resolve_tip_meta(Some("TOKEN"), None, Some("WETH"), 18).unwrap();
+        let fallback = resolve_tip_meta("tempo", Some("TOKEN"), None, Some("WETH"), 18).unwrap();
         assert_eq!(fallback.decimals, 18);
         assert_eq!(fallback.source, "default");
+    }
+
+    #[test]
+    fn normalizes_tempo_symbols_to_token_addresses() {
+        assert_eq!(
+            normalize_asset_for_network("tempo", "USDC"),
+            "0x20C000000000000000000000b9537d11c60E8b50"
+        );
+        assert_eq!(
+            normalize_asset_for_network("tempo", "path_usd"),
+            "0x20c0000000000000000000000000000000000000"
+        );
     }
 
     #[test]

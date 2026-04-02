@@ -124,6 +124,7 @@ Request body:
 - JSON: `{ "amount": "<token amount string>", "asset": "<token address or symbol>", "decimals": <optional integer> }`
 - `amount` must be a positive token amount string (integer or decimal).
 - `asset` selects which token to tip in on Tempo.
+- Tempo symbols are normalized to token addresses in challenges/responses (for example `USDC` -> `0x20C000000000000000000000b9537d11c60E8b50`).
 - If `asset` is omitted, the service falls back to its configured `TIP_ASSET` (if set).
 - `decimals` is optional per request for token precision.
   - If omitted, service auto-detects common assets (`ETH`/`WETH`=18, `USDC`/`USDT`=6), then falls back to server `TIP_DECIMALS`.
@@ -183,7 +184,7 @@ Example:
 Example response:
 ```json
 {
-  "asset": "USDC",
+  "asset": "0x20C000000000000000000000b9537d11c60E8b50",
   "decimals": 6,
   "source": "detected"
 }
@@ -191,6 +192,7 @@ Example response:
 
 Tempo-only note:
 - Use Tempo-supported token addresses/symbols when calling `/tip` and `/tip/meta`.
+- Service default Tempo RPC is `https://tempo-mainnet.drpc.org` unless overridden by server config.
 
 ## Cache behavior
 - Short in-memory TTL cache (default 5 seconds).
