@@ -9,6 +9,9 @@ A minimal Rust webserver that serves live Chainlink prices using [`gud-price`](h
 Built on top of your `gud-price` project:
 - GitHub: https://github.com/thevolcanomanishere/gud-price
 
+Live deployment:
+- https://gud-price-service.up.railway.app/
+
 ## Features
 
 - Stateless HTTP API
@@ -75,6 +78,28 @@ curl -X POST http://localhost:3000/tip \
   -H "content-type: application/json" \
   -d '{"amount":"1000000","asset":"USDC"}'
 ```
+
+## Spreadsheet Usage
+
+Use the slim price endpoint for spreadsheet-friendly numeric values:
+- `GET /price/{pair}?slim=true`
+
+Google Sheets examples:
+```text
+=VALUE(IMPORTDATA("https://gud-price-service.up.railway.app/price/BTC_USD?slim=true"))
+=VALUE(IMPORTDATA("https://gud-price-service.up.railway.app/price/ETH_USD?slim=true"))
+```
+
+Excel examples:
+```text
+=VALUE(WEBSERVICE("https://gud-price-service.up.railway.app/price/BTC_USD?slim=true"))
+=VALUE(WEBSERVICE("https://gud-price-service.up.railway.app/price/XAU_USD?slim=true"))
+```
+
+Notes:
+- Use canonical pair format like `BTC_USD`, `ETH_USD`, `XAU_USD`.
+- If `WEBSERVICE` is unavailable in your Excel version, use Power Query:
+  Data -> From Web -> `https://gud-price-service.up.railway.app/price/BTC_USD?slim=true`
 
 ## Tipping
 
