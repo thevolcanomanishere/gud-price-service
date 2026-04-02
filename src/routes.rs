@@ -14,6 +14,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, Notify, mpsc};
 
+const PREFERRED_FEED_MAX_STALENESS_SECS: u64 = 120;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PriceResponse {
     pub pair: String,
@@ -174,15 +176,18 @@ async fn get_price(
         {
             if let Ok(result) = fetch_feed(state.provider.clone(), pair.clone(), feed).await {
                 let payload = result.payload;
-                write_cache(&state, payload.clone()).await;
+                if is_payload_fresh(&payload) {
+                    write_cache(&state, payload.clone()).await;
 
-                if slim {
-                    return Ok(payload.price.into_response());
+                    if slim {
+                        return Ok(payload.price.into_response());
+                    }
+
+                    return Ok(
+                        Json(to_response(payload, false, state.cache_ttl.as_secs()))
+                            .into_response(),
+                    );
                 }
-
-                return Ok(
-                    Json(to_response(payload, false, state.cache_ttl.as_secs())).into_response()
-                );
             }
         }
 
@@ -290,9 +295,9 @@ async fn track_preferred_feed(
 }
 
 fn is_better_preference(candidate: &ProbeResult, current: &ProbeResult) -> bool {
-    candidate.latency < current.latency
-        || (candidate.latency == current.latency
-            && candidate.payload.updated_at > current.payload.updated_at)
+    candidate.payload.updated_at > current.payload.updated_at
+        || (candidate.payload.updated_at == current.payload.updated_at
+            && candidate.latency < current.latency)
 }
 
 async fn fetch_feed(
@@ -390,6 +395,15 @@ fn format_updated_at(timestamp: u64) -> String {
     "1970-01-01T00:00:00Z".to_string()
 }
 
+fn is_payload_fresh(payload: &CachedPrice) -> bool {
+    let now = current_unix_timestamp();
+    payload.updated_at.saturating_add(PREFERRED_FEED_MAX_STALENESS_SECS) >= now
+}
+
+fn current_unix_timestamp() -> u64 {
+    Utc::now().timestamp().max(0) as u64
+}
+
 async fn read_cached(state: &AppState, pair: &str) -> Option<CachedPrice> {
     let mut guard = state.cache.write().await;
     guard.get(pair)
@@ -449,10 +463,13 @@ mod tests {
                 *chain_calls.entry(feed.chain).or_default() += 1;
             }
 
+            let now = current_unix_timestamp();
             let (sleep_ms, updated_at): (u64, u64) = match feed.chain {
-                "fast" => (5, 100),
-                "slow" => (60, 200),
-                _ => (0, 2),
+                "fast" => (5, now.saturating_sub(10)),
+                "slow" => (60, now.saturating_sub(1)),
+                "stale" => (1, now.saturating_sub(PREFERRED_FEED_MAX_STALENESS_SECS + 600)),
+                "fresh" => (10, now.saturating_sub(2)),
+                _ => (0, now.saturating_sub(1)),
             };
 
             if sleep_ms > 0 {
@@ -562,7 +579,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn selects_latest_updated_feed() {
+    async fn prefers_fresher_feed_after_background_probe() {
         let calls = Arc::new(AtomicUsize::new(0));
         let chain_calls = Arc::new(StdMutex::new(HashMap::new()));
         let registry = multi_feed_registry("XAU_USD", &[("slow", "0xslow"), ("fast", "0xfast")]);
@@ -591,7 +608,6 @@ mod tests {
         assert_eq!(payload.chain, "fast");
         assert_eq!(payload.address, "0xfast");
         assert_eq!(payload.description, "XAU / USD");
-        assert_eq!(payload.updated_at, "1970-01-01T00:01:40Z");
         assert!(!payload.cached);
         assert_eq!(calls.load(Ordering::SeqCst), 2);
 
@@ -609,9 +625,69 @@ mod tests {
             .unwrap();
 
         assert_eq!(second.status(), StatusCode::OK);
+        let body = second.into_body().collect().await.unwrap().to_bytes();
+        let payload: PriceResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload.chain, "slow");
         let per_chain = chain_calls.lock().unwrap();
-        assert_eq!(per_chain.get("fast"), Some(&2));
-        assert_eq!(per_chain.get("slow"), Some(&1));
+        assert_eq!(per_chain.get("fast"), Some(&1));
+        assert_eq!(per_chain.get("slow"), Some(&2));
+    }
+
+    #[tokio::test]
+    async fn stale_preferred_feed_is_ignored_and_reprobed() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let chain_calls = Arc::new(StdMutex::new(HashMap::new()));
+        let registry = multi_feed_registry("ETH_USD", &[("stale", "0xstale"), ("fresh", "0xfresh")]);
+        let state = test_state_with_registry(
+            Duration::from_millis(1),
+            calls.clone(),
+            chain_calls.clone(),
+            registry,
+        );
+        write_preferred_feed(
+            &state,
+            "ETH_USD".to_string(),
+            PreferredFeed {
+                chain: "stale".to_string(),
+                address: "0xstale".to_string(),
+            },
+        )
+        .await;
+
+        let app = app(state);
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/price/ETH_USD")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let payload: PriceResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload.chain, "stale");
+
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        tokio::time::sleep(Duration::from_millis(5)).await;
+
+        let second = app
+            .oneshot(
+                Request::builder()
+                    .uri("/price/ETH_USD")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(second.status(), StatusCode::OK);
+        let body = second.into_body().collect().await.unwrap().to_bytes();
+        let payload: PriceResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload.chain, "fresh");
     }
 
     #[tokio::test]

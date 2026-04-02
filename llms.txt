@@ -37,7 +37,8 @@ Path param:
 - `pair`: requested trading pair.
 - Input is normalized internally (e.g. `btc-usd`, `BTC / USD`, `btc_usd` all map to `BTC_USD`).
 - On a cold lookup, the service races every enabled chain feed in parallel and returns the first successful result.
-- In the background, it records the fastest healthy chain for that pair and reuses that preference for up to 1 week.
+- In the background, it records the freshest healthy chain for that pair, using latency as a tiebreaker, and reuses that preference for up to 1 week.
+- If the preferred chain later returns a stale `updated_at`, the service discards that preference and re-races all chains.
 
 Default response (JSON):
 - `pair` string
