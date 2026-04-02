@@ -10,15 +10,16 @@ pub struct FeedRef {
 }
 
 #[derive(Debug, Clone)]
-pub struct DiscoveryAsset {
-    pub pair: String,
-    pub chains: Vec<String>,
+pub struct DiscoveryChain {
+    pub name: String,
+    pub description: String,
+    pub pairs: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Registry {
     by_pair: HashMap<String, Vec<FeedRef>>,
-    discovery: Vec<DiscoveryAsset>,
+    discovery: Vec<DiscoveryChain>,
 }
 
 impl Registry {
@@ -60,7 +61,7 @@ impl Registry {
         })
     }
 
-    pub fn discovery_assets(&self) -> &[DiscoveryAsset] {
+    pub fn discovery_chains(&self) -> &[DiscoveryChain] {
         &self.discovery
     }
 }
@@ -86,18 +87,41 @@ fn add_chain_feeds(
     }
 }
 
-fn build_discovery(by_pair: &HashMap<String, Vec<FeedRef>>) -> Vec<DiscoveryAsset> {
-    let mut discovery = Vec::with_capacity(by_pair.len());
+fn chain_description(chain: &str) -> &'static str {
+    match chain {
+        "ethereum" => "Chainlink price feeds on Ethereum mainnet",
+        "arbitrum" => "Chainlink price feeds on Arbitrum One L2 rollup",
+        "base" => "Chainlink price feeds on Base L2 rollup (Coinbase)",
+        "polygon" => "Chainlink price feeds on Polygon PoS sidechain",
+        _ => "Chainlink price feeds",
+    }
+}
+
+fn build_discovery(by_pair: &HashMap<String, Vec<FeedRef>>) -> Vec<DiscoveryChain> {
+    let mut by_chain: HashMap<&str, Vec<String>> = HashMap::new();
 
     for (pair, feeds) in by_pair {
-        let mut chains: Vec<String> = feeds.iter().map(|f| f.chain.to_string()).collect();
-        chains.sort_unstable();
-        chains.dedup();
-        discovery.push(DiscoveryAsset {
-            pair: pair.clone(),
-            chains,
-        });
+        for feed in feeds {
+            by_chain
+                .entry(feed.chain)
+                .or_default()
+                .push(pair.clone());
+        }
     }
-    discovery.sort_by(|a, b| a.pair.cmp(&b.pair));
+
+    let mut discovery: Vec<DiscoveryChain> = by_chain
+        .into_iter()
+        .map(|(chain, mut pairs)| {
+            pairs.sort_unstable();
+            pairs.dedup();
+            DiscoveryChain {
+                name: chain.to_string(),
+                description: chain_description(chain).to_string(),
+                pairs,
+            }
+        })
+        .collect();
+
+    discovery.sort_by(|a, b| a.name.cmp(&b.name));
     discovery
 }

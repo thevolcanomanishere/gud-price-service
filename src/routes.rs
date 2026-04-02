@@ -1,5 +1,5 @@
 use crate::pair::canonicalize_pair;
-use crate::registry::DiscoveryAsset as RegistryDiscoveryAsset;
+use crate::registry::DiscoveryChain as RegistryDiscoveryChain;
 use crate::state::{AppState, CachedPrice, PreferredFeed};
 use crate::tip::{
     TipErrorResponse, TipMetaQuery, TipOutcome, TipRequest, payment_required_response,
@@ -33,15 +33,18 @@ pub struct PriceResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiscoveryAsset {
-    pub pair: String,
-    pub chains: Vec<String>,
+pub struct DiscoveryChainResponse {
+    pub name: String,
+    pub description: String,
+    pub pair_count: usize,
+    pub pairs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveryResponse {
-    pub asset_count: usize,
-    pub assets: Vec<DiscoveryAsset>,
+    pub chain_count: usize,
+    pub total_pairs: usize,
+    pub chains: Vec<DiscoveryChainResponse>,
 }
 
 #[derive(Debug, Serialize)]
@@ -130,24 +133,27 @@ async fn get_discovery(
     State(state): State<AppState>,
     Query(query): Query<HashMap<String, String>>,
 ) -> Response {
-    let assets = state
+    let chains: Vec<DiscoveryChainResponse> = state
         .registry
-        .discovery_assets()
+        .discovery_chains()
         .iter()
-        .map(map_discovery_asset)
-        .collect::<Vec<_>>();
+        .map(map_discovery_chain)
+        .collect();
 
     if query
         .get("format")
         .map(|value| value.eq_ignore_ascii_case("csv"))
         .unwrap_or(false)
     {
-        return discovery_to_csv(&assets);
+        return discovery_to_csv(&chains);
     }
 
+    let total_pairs = chains.iter().map(|c| c.pair_count).sum();
+
     Json(DiscoveryResponse {
-        asset_count: assets.len(),
-        assets,
+        chain_count: chains.len(),
+        total_pairs,
+        chains,
     })
     .into_response()
 }
@@ -414,24 +420,29 @@ async fn fetch_feed(
     })
 }
 
-fn map_discovery_asset(item: &RegistryDiscoveryAsset) -> DiscoveryAsset {
-    DiscoveryAsset {
-        pair: item.pair.clone(),
-        chains: item.chains.clone(),
+fn map_discovery_chain(item: &RegistryDiscoveryChain) -> DiscoveryChainResponse {
+    DiscoveryChainResponse {
+        name: item.name.clone(),
+        description: item.description.clone(),
+        pair_count: item.pairs.len(),
+        pairs: item.pairs.clone(),
     }
 }
 
-fn discovery_to_csv(assets: &[DiscoveryAsset]) -> Response {
-    let mut csv = String::with_capacity(assets.len() * 64);
-    csv.push_str("pair,chains\n");
+fn discovery_to_csv(chains: &[DiscoveryChainResponse]) -> Response {
+    let mut csv = String::with_capacity(chains.len() * 256);
+    csv.push_str("chain,description,pair\n");
 
-    for asset in assets {
-        let line = format!(
-            "{},{}\n",
-            escape_csv_field(&asset.pair),
-            escape_csv_field(&asset.chains.join("|"))
-        );
-        csv.push_str(&line);
+    for chain in chains {
+        for pair in &chain.pairs {
+            let line = format!(
+                "{},{},{}\n",
+                escape_csv_field(&chain.name),
+                escape_csv_field(&chain.description),
+                escape_csv_field(pair),
+            );
+            csv.push_str(&line);
+        }
     }
 
     (
@@ -710,8 +721,11 @@ mod tests {
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         let payload: DiscoveryResponse = serde_json::from_slice(&bytes).unwrap();
 
-        assert!(payload.asset_count > 0);
-        assert!(payload.assets.iter().any(|a| a.pair == "BTC_USD"));
+        assert!(payload.chain_count > 0);
+        assert!(payload
+            .chains
+            .iter()
+            .any(|c| c.pairs.iter().any(|p| p == "BTC_USD")));
     }
 
     #[tokio::test]

@@ -26,14 +26,18 @@ Response:
 `GET /discovery`
 
 Purpose:
-- Returns all canonical pairs this service can serve.
-- Optional query `format=csv` emits CSV with header `pair,chains`.
+- Returns all supported chains and their available pairs, grouped by chain.
+- Each chain includes a description of the data source.
+- Optional query `format=csv` emits CSV with header `chain,description,pair`.
 
 Response shape:
-- `asset_count` number
-- `assets` array of:
-  - `pair` string (canonical symbol, e.g. `BTC_USD`)
-  - `chains` string[] (where data exists)
+- `chain_count` number
+- `total_pairs` number (sum of pairs across all chains; a pair on multiple chains is counted per chain)
+- `chains` array of:
+  - `name` string (chain identifier)
+  - `description` string (human-readable data source description)
+  - `pair_count` number
+  - `pairs` string[] (canonical pair symbols, e.g. `BTC_USD`)
 
 Example:
 `GET /discovery`
@@ -41,23 +45,48 @@ Example:
 Example JSON response:
 ```json
 {
-  "asset_count": 4,
-  "assets": [
-    { "pair": "BTC_USD", "chains": ["arbitrum", "base", "ethereum", "polygon"] },
-    { "pair": "ETH_USD", "chains": ["arbitrum", "base", "ethereum", "polygon"] },
-    { "pair": "XAU_USD", "chains": ["arbitrum", "base", "ethereum", "polygon"] },
-    { "pair": "LINK_USD", "chains": ["arbitrum", "base", "ethereum"] }
+  "chain_count": 4,
+  "total_pairs": 15,
+  "chains": [
+    {
+      "name": "arbitrum",
+      "description": "Chainlink price feeds on Arbitrum One L2 rollup",
+      "pair_count": 4,
+      "pairs": ["BTC_USD", "ETH_USD", "LINK_USD", "XAU_USD"]
+    },
+    {
+      "name": "base",
+      "description": "Chainlink price feeds on Base L2 rollup (Coinbase)",
+      "pair_count": 4,
+      "pairs": ["BTC_USD", "ETH_USD", "LINK_USD", "XAU_USD"]
+    },
+    {
+      "name": "ethereum",
+      "description": "Chainlink price feeds on Ethereum mainnet",
+      "pair_count": 4,
+      "pairs": ["BTC_USD", "ETH_USD", "LINK_USD", "XAU_USD"]
+    },
+    {
+      "name": "polygon",
+      "description": "Chainlink price feeds on Polygon PoS sidechain",
+      "pair_count": 3,
+      "pairs": ["BTC_USD", "ETH_USD", "XAU_USD"]
+    }
   ]
 }
 ```
 
 Example CSV response (`GET /discovery?format=csv`):
 ```csv
-pair,chains
-BTC_USD,arbitrum|base|ethereum|polygon
-ETH_USD,arbitrum|base|ethereum|polygon
-XAU_USD,arbitrum|base|ethereum|polygon
-LINK_USD,arbitrum|base|ethereum
+chain,description,pair
+arbitrum,Chainlink price feeds on Arbitrum One L2 rollup,BTC_USD
+arbitrum,Chainlink price feeds on Arbitrum One L2 rollup,ETH_USD
+base,Chainlink price feeds on Base L2 rollup (Coinbase),BTC_USD
+base,Chainlink price feeds on Base L2 rollup (Coinbase),ETH_USD
+ethereum,Chainlink price feeds on Ethereum mainnet,BTC_USD
+ethereum,Chainlink price feeds on Ethereum mainnet,ETH_USD
+polygon,Chainlink price feeds on Polygon PoS sidechain,BTC_USD
+polygon,Chainlink price feeds on Polygon PoS sidechain,ETH_USD
 ```
 
 ### 3) Price

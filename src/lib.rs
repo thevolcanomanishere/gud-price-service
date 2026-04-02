@@ -9,7 +9,7 @@ pub mod tip;
 
 pub use config::Config;
 pub use provider::{GudPriceProvider, PriceProvider, PriceRound};
-pub use routes::{DiscoveryAsset, DiscoveryResponse, PriceResponse, app};
+pub use routes::{DiscoveryChainResponse, DiscoveryResponse, PriceResponse, app};
 pub use state::AppState;
 pub use tip::{
     MppTipProcessor, TipConfig, TipErrorResponse, TipMetaQuery, TipMetaResponse,
