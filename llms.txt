@@ -19,6 +19,7 @@ Response:
 
 Purpose:
 - Returns all canonical pairs this service can serve.
+- Optional query `format=csv` emits CSV with header `pair,chains`.
 
 Response shape:
 - `asset_count` number

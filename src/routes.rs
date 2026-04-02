@@ -88,7 +88,10 @@ pub fn app(state: AppState) -> Router {
         .with_state(state)
 }
 
-async fn get_discovery(State(state): State<AppState>) -> Json<DiscoveryResponse> {
+async fn get_discovery(
+    State(state): State<AppState>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
     let assets = state
         .registry
         .discovery_assets()
@@ -96,10 +99,19 @@ async fn get_discovery(State(state): State<AppState>) -> Json<DiscoveryResponse>
         .map(map_discovery_asset)
         .collect::<Vec<_>>();
 
+    if query
+        .get("format")
+        .map(|value| value.eq_ignore_ascii_case("csv"))
+        .unwrap_or(false)
+    {
+        return discovery_to_csv(&assets);
+    }
+
     Json(DiscoveryResponse {
         asset_count: assets.len(),
         assets,
     })
+    .into_response()
 }
 
 async fn get_health() -> Json<HealthResponse> {
@@ -167,6 +179,38 @@ fn map_discovery_asset(item: &RegistryDiscoveryAsset) -> DiscoveryAsset {
     DiscoveryAsset {
         pair: item.pair.clone(),
         chains: item.chains.clone(),
+    }
+}
+
+fn discovery_to_csv(assets: &[DiscoveryAsset]) -> Response {
+    let mut csv = String::with_capacity(assets.len() * 64);
+    csv.push_str("pair,chains\n");
+
+    for asset in assets {
+        let line = format!(
+            "{},{}\n",
+            escape_csv_field(&asset.pair),
+            escape_csv_field(&asset.chains.join("|"))
+        );
+        csv.push_str(&line);
+    }
+
+    (
+        StatusCode::OK,
+        [
+            (CONTENT_TYPE, HeaderValue::from_static("text/csv; charset=utf-8")),
+        ],
+        csv,
+    )
+        .into_response()
+}
+
+fn escape_csv_field(field: &str) -> String {
+    if field.contains(',') || field.contains('\n') || field.contains('"') {
+        let escaped = field.replace('"', "\"\"");
+        format!("\"{}\"", escaped)
+    } else {
+        field.to_string()
     }
 }
 

@@ -14,14 +14,14 @@ Built on top of your `gud-price` project:
 - Stateless HTTP API
 - Live price reads via `gud-price`
 - Short TTL in-memory cache
-- Discovery endpoint for supported pairs
+- Discovery endpoint for supported pairs (JSON or CSV via `format=csv`)
 - Optional slim plain-text mode for easy machine consumption
 - `llms.txt` served at `/llms.txt` and `/.well-known/llms.txt`
 
 ## Endpoints
 
 - `GET /health`
-- `GET /discovery`
+- `GET /discovery` (JSON default, add `?format=csv` for CSV output)
 - `GET /price/{pair}` (JSON)
 - `GET /price/{pair}?slim=true` (plain text price only)
 - `GET /llms.txt`
