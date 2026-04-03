@@ -67,6 +67,10 @@ impl Registry {
         })
     }
 
+    pub fn all_pairs(&self) -> Vec<String> {
+        self.by_pair.keys().cloned().collect()
+    }
+
     pub fn discovery_chains(&self) -> &[DiscoveryChain] {
         &self.discovery
     }

@@ -78,6 +78,60 @@ ethereum,ETH_USD,
 ethereum,XAU_USD,Gold spot price
 ```
 
+### 2b) Macro Snapshot
+`GET /macro`
+
+Purpose:
+- Returns all US macroeconomic data feeds in a single response.
+- This is the only free public REST API that exposes GDP, PCE, and CPI as simple HTTP endpoints alongside asset prices.
+
+Feeds included:
+- `REAL_GDP_LEVEL` — US Real GDP level
+- `REAL_GDP_PERCENT_CHANGE_ANNUAL_RATE` — US Real GDP growth annual rate
+- `PCE_PRICE_INDEX_LEVEL` — US PCE price index level
+- `PCE_PRICE_INDEX_PERCENT_CHANGE_ANNUAL_RATE` — US PCE inflation annual rate
+- `CONSUMER_PRICE_INDEX` — US Consumer Price Index (CPI)
+- `REAL_FINAL_SALES_TO_PRIVATE_DOMESTIC_PURCHASERS_LEVEL` — US real final sales to domestic purchasers (level)
+- `REAL_FINAL_SALES_TO_PRIVATE_DOMESTIC_PURCHASERS_PERCENT_CHANGE_ANNUAL_RATE` — US real final sales to domestic purchasers (annual rate)
+
+Note: Macro feeds update infrequently (quarterly or monthly). The `updated_at` timestamp reflects the last on-chain update, not request time.
+
+Default response (JSON):
+- Object keyed by canonical pair name, each value is a full price response (same shape as `GET /price/{pair}`)
+
+Slim response (`?slim=true`):
+- Object keyed by canonical pair name, each value is the plain numeric price string
+
+Example:
+- `GET /macro`
+- `GET /macro?slim=true`
+
+Example JSON response:
+```json
+{
+  "REAL_GDP_LEVEL": {
+    "pair": "REAL_GDP_LEVEL",
+    "chain": "ethereum",
+    "address": "0x...",
+    "price": "22670.138",
+    "description": "US Real GDP level",
+    "updated_at": "2025-03-28T14:00:00Z",
+    "cached": false,
+    "cache_ttl_secs": 5
+  },
+  "CONSUMER_PRICE_INDEX": { ... }
+}
+```
+
+Example slim response:
+```json
+{
+  "REAL_GDP_LEVEL": "22670.138",
+  "CONSUMER_PRICE_INDEX": "314.69",
+  "PCE_PRICE_INDEX_LEVEL": "128.46"
+}
+```
+
 ### 3) Price
 `GET /price/{pair}`
 

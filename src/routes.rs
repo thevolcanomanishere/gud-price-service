@@ -167,7 +167,9 @@ pub fn app(state: AppState) -> Router {
         .route("/tip/meta", get(get_tip_meta))
         .route("/badge/{pair}", get(get_badge))
         .route("/price/{pair}", get(get_price))
+        .route("/prices", get(get_prices))
         .route("/discovery", get(get_discovery))
+        .route("/macro", get(get_macro))
         .route("/health", get(get_health))
         .route("/llms.txt", get(get_llms_txt))
         .route("/.well-known/llms.txt", get(get_llms_txt))
@@ -303,6 +305,124 @@ async fn get_badge(
     };
 
     Ok(Json(badge).into_response())
+}
+
+async fn get_macro(
+    State(state): State<AppState>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    let slim = is_slim_mode(&query);
+    let pairs: Vec<String> = state
+        .registry
+        .all_pairs()
+        .into_iter()
+        .filter(|p| is_macro_pair(p))
+        .collect();
+
+    let results = batch_fetch_prices(&state, pairs).await;
+
+    if slim {
+        let slim_map: HashMap<String, String> = results
+            .into_iter()
+            .filter_map(|(pair, result)| result.ok().map(|(payload, _)| (pair, payload.price)))
+            .collect();
+        return Json(slim_map).into_response();
+    }
+
+    let price_map: HashMap<String, PriceResponse> = results
+        .into_iter()
+        .filter_map(|(pair, result)| {
+            result
+                .ok()
+                .map(|(payload, cached)| (pair, to_response(payload, cached, state.cache_ttl.as_secs())))
+        })
+        .collect();
+
+    Json(price_map).into_response()
+}
+
+async fn get_prices(
+    State(state): State<AppState>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    let slim = is_slim_mode(&query);
+
+    let pairs_str = match query.get("pairs") {
+        Some(p) if !p.is_empty() => p.clone(),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "pairs query parameter is required".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let pairs: Vec<String> = pairs_str
+        .split(',')
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .take(20)
+        .collect();
+
+    if pairs.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "at least one pair is required".to_string(),
+            }),
+        )
+            .into_response();
+    }
+
+    let results = batch_fetch_prices(&state, pairs).await;
+
+    if slim {
+        let slim_map: HashMap<String, String> = results
+            .into_iter()
+            .filter_map(|(pair, result)| result.ok().map(|(payload, _)| (pair, payload.price)))
+            .collect();
+        return Json(slim_map).into_response();
+    }
+
+    let price_map: HashMap<String, PriceResponse> = results
+        .into_iter()
+        .filter_map(|(pair, result)| {
+            result
+                .ok()
+                .map(|(payload, cached)| (pair, to_response(payload, cached, state.cache_ttl.as_secs())))
+        })
+        .collect();
+
+    Json(price_map).into_response()
+}
+
+async fn batch_fetch_prices(
+    state: &AppState,
+    pairs: Vec<String>,
+) -> Vec<(String, Result<(CachedPrice, bool), ApiError>)> {
+    let tasks: Vec<_> = pairs
+        .into_iter()
+        .map(|pair| {
+            let state = state.clone();
+            let pair_key = pair.clone();
+            let handle = tokio::spawn(async move {
+                let result = resolve_price_payload(&state, &pair).await;
+                (pair_key, result)
+            });
+            handle
+        })
+        .collect();
+
+    let mut results = Vec::new();
+    for task in tasks {
+        if let Ok((pair, result)) = task.await {
+            results.push((pair, result));
+        }
+    }
+    results
 }
 
 async fn resolve_price_payload(
@@ -679,6 +799,19 @@ fn pattern_pair_description(canonical: &str, chainlink_name: &str) -> Option<Str
     }
 
     None
+}
+
+fn is_macro_pair(canonical: &str) -> bool {
+    matches!(
+        canonical,
+        "CONSUMER_PRICE_INDEX"
+            | "PCE_PRICE_INDEX_LEVEL"
+            | "PCE_PRICE_INDEX_PERCENT_CHANGE_ANNUAL_RATE"
+            | "REAL_GDP_LEVEL"
+            | "REAL_GDP_PERCENT_CHANGE_ANNUAL_RATE"
+            | "REAL_FINAL_SALES_TO_PRIVATE_DOMESTIC_PURCHASERS_LEVEL"
+            | "REAL_FINAL_SALES_TO_PRIVATE_DOMESTIC_PURCHASERS_PERCENT_CHANGE_ANNUAL_RATE"
+    )
 }
 
 fn discovery_to_csv(data: &HashMap<String, Vec<DiscoveryPairEntry>>) -> Response {
